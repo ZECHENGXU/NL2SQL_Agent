@@ -15,7 +15,17 @@ This module implements the first runnable Agent skeleton for the Huatai Text-to-
 From the project root:
 
 ```powershell
+conda activate huatai-agent
+```
+
+```powershell
 python -m huatai_query_agent.agent.run_agent --all --preview 2
+```
+
+If the shell has not activated Conda correctly, use the environment Python directly:
+
+```powershell
+& "E:\anaconda\envs\huatai-agent\python.exe" -m huatai_query_agent.agent.run_agent --all --preview 2
 ```
 
 Run one case:
@@ -34,6 +44,13 @@ Batch evaluation:
 
 ```powershell
 python huatai_query_agent\evaluation\run_agent_eval.py
+```
+
+Expected M1 result:
+
+```text
+langgraph_available=True
+agent_m1_executable_rate=7/7 (100.00%)
 ```
 
 ## Next implementation step
