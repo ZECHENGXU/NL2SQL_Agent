@@ -31,7 +31,7 @@ def _merge(state: AgentState, update: dict[str, Any]) -> AgentState:
 
 
 def route_after_slot_check(state: AgentState) -> str:
-    return "ask_clarification" if state.get("missing_slots") else "retrieve_metadata"
+    return "ask_clarification" if state.get("missing_slots") else "resolve_product"
 
 
 def route_after_product_resolve(state: AgentState) -> str:
@@ -112,11 +112,23 @@ class QueryAgent:
             "load_thread_context": m1_nodes.load_thread_context,
             "normalize_question": m1_nodes.normalize_question,
             "detect_followup": m1_nodes.detect_followup,
-            "parse_intent": m1_nodes.parse_intent(self.repo, allow_unmatched=self.sql_mode == "llm"),
+            "parse_intent": m1_nodes.parse_intent(
+                self.repo,
+                generator=self.llm_generator,
+                sql_mode=self.sql_mode,
+                allow_unmatched=self.sql_mode == "llm",
+            ),
             "check_intent_slots": m1_nodes.check_intent_slots,
             "retrieve_metadata": m1_nodes.retrieve_metadata(self.repo, self.retriever),
+            "fill_slots": m1_nodes.fill_slots(
+                generator=self.llm_generator,
+                sql_mode=self.sql_mode,
+            ),
             "resolve_product": m1_nodes.resolve_product,
-            "plan_sql": m1_nodes.plan_sql,
+            "plan_sql": m1_nodes.plan_sql(
+                generator=self.llm_generator,
+                sql_mode=self.sql_mode,
+            ),
             "generate_sql": m1_nodes.generate_sql(
                 self.repo,
                 generator=self.llm_generator,
@@ -132,7 +144,10 @@ class QueryAgent:
             ),
             "ask_clarification": m1_nodes.ask_clarification,
             "human_review_or_explain": m1_nodes.human_review_or_explain,
-            "render_answer": m1_nodes.render_answer,
+            "render_answer": m1_nodes.render_answer(
+                generator=self.llm_generator,
+                sql_mode=self.sql_mode,
+            ),
             "persist_state": m1_nodes.persist_state,
         }
 
@@ -144,6 +159,8 @@ class QueryAgent:
             "normalize_question",
             "detect_followup",
             "parse_intent",
+            "retrieve_metadata",
+            "fill_slots",
             "check_intent_slots",
         ):
             state = _merge(state, nodes[name](state))
@@ -152,7 +169,6 @@ class QueryAgent:
             state = _merge(state, nodes["ask_clarification"](state))
             return _merge(state, nodes["persist_state"](state))
 
-        state = _merge(state, nodes["retrieve_metadata"](state))
         state = _merge(state, nodes["resolve_product"](state))
         if route_after_product_resolve(state) == "ask_clarification":
             state = _merge(state, nodes["ask_clarification"](state))
@@ -201,9 +217,10 @@ class QueryAgent:
         graph.add_edge("load_thread_context", "normalize_question")
         graph.add_edge("normalize_question", "detect_followup")
         graph.add_edge("detect_followup", "parse_intent")
-        graph.add_edge("parse_intent", "check_intent_slots")
+        graph.add_edge("parse_intent", "retrieve_metadata")
+        graph.add_edge("retrieve_metadata", "fill_slots")
+        graph.add_edge("fill_slots", "check_intent_slots")
         graph.add_conditional_edges("check_intent_slots", route_after_slot_check)
-        graph.add_edge("retrieve_metadata", "resolve_product")
         graph.add_conditional_edges("resolve_product", route_after_product_resolve)
         graph.add_edge("plan_sql", "generate_sql")
         graph.add_edge("generate_sql", "validate_sql")

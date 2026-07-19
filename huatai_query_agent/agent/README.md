@@ -1,12 +1,14 @@
-# Agent M1/M2 Prototype
+# Agent M4 Prototype
 
-This module implements the first runnable Agent prototype for the Huatai Text-to-SQL project.
+This module implements the runnable LangGraph Agent prototype for the Huatai Text-to-SQL project.
 
 ## Current scope
 
 - Runs the documented LangGraph `StateGraph` node flow when `langgraph` is installed.
 - Uses deterministic matching from the 7 official demo questions to standard DuckDB SQL.
 - Retrieves metadata context through `HybridMetadataRetriever` with YAML exact/keyword retrieval and Qdrant Local vector retrieval.
+- Supports M4 LLM mode with separately observable nodes: intent parsing, slot filling, SQL planning, SQL generation, SQL repair, and result explanation.
+- Suppresses hallucination through structured JSON outputs, metadata-grounded prompts, `sqlglot` parsing, read-only checks, table whitelist, qualified field whitelist, and real DuckDB execution.
 - Executes SQL against `huatai_query_agent/data/cust_data.duckdb`.
 - Returns trace, SQL metadata context, result preview, row count, and final answer.
 - Uses a fallback runner when `langgraph` is not installed.
@@ -67,11 +69,17 @@ Batch evaluation:
 python huatai_query_agent\evaluation\run_agent_eval.py
 ```
 
-Expected M1 result:
+Expected demo result:
 
 ```text
 langgraph_available=True
 agent_executable_rate[demo]=7/7 (100.00%)
+```
+
+Expected LLM trace includes:
+
+```text
+parse_intent -> retrieve_metadata -> fill_slots -> plan_sql -> generate_sql -> validate_sql -> execute_sql -> validate_result -> render_answer
 ```
 
 ## LLM Configuration
@@ -92,9 +100,9 @@ HUATAI_LLM_MAX_TOKENS=4096
 
 ## Next implementation step
 
-Upgrade the current LLM-assisted path into a stronger Text-to-SQL Agent:
+Upgrade the current M4 prototype into a broader evaluation version:
 
 1. Replace hashing vectors with a local semantic embedding API.
-2. Split intent parsing, SQL planning, SQL generation, and SQL repair into separately evaluated LLM nodes.
-3. Add metric-level SQL rule validation beyond table whitelist and read-only checks.
-4. Add evaluation cases beyond the 7 official examples.
+2. Add metric-level SQL rule validation beyond table and qualified field whitelist checks.
+3. Add evaluation cases beyond the 7 official examples.
+4. Add UI panels for node trace, retrieved context, SQL guardrail results, and repair history.

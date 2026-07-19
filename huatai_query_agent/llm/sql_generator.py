@@ -7,7 +7,14 @@ from typing import Any
 
 from huatai_query_agent.llm.client import ChatCompletionResult, LlmClientError, OpenAICompatibleChatClient
 from huatai_query_agent.llm.config import LlmSettings
-from huatai_query_agent.llm.prompts import build_sql_generation_messages, build_sql_repair_messages
+from huatai_query_agent.llm.prompts import (
+    build_intent_parse_messages,
+    build_result_explanation_messages,
+    build_slot_fill_messages,
+    build_sql_generation_messages,
+    build_sql_plan_messages,
+    build_sql_repair_messages,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,23 @@ class GeneratedSql:
         }
 
 
+@dataclass(frozen=True)
+class StructuredLlmOutput:
+    payload: dict[str, Any]
+    confidence: float = 0.0
+    model: str = ""
+    usage: dict[str, Any] = field(default_factory=dict)
+    raw_content: str = ""
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "payload": self.payload,
+            "confidence": self.confidence,
+            "model": self.model,
+            "usage": self.usage,
+        }
+
+
 class TextToSqlGenerator:
     def __init__(self, client: OpenAICompatibleChatClient | None = None) -> None:
         self.client = client or OpenAICompatibleChatClient()
@@ -42,8 +66,55 @@ class TextToSqlGenerator:
         settings = LlmSettings.from_env()
         return cls(OpenAICompatibleChatClient(settings))
 
-    def generate_sql(self, *, question: str, metadata_context: dict[str, Any]) -> GeneratedSql:
-        messages = build_sql_generation_messages(question, metadata_context)
+    def parse_intent(self, *, question: str) -> StructuredLlmOutput:
+        messages = build_intent_parse_messages(question)
+        result = self.client.chat_json(messages)
+        return _parse_structured_output(result)
+
+    def fill_slots(
+        self,
+        *,
+        question: str,
+        intent: dict[str, Any],
+        metadata_context: dict[str, Any],
+    ) -> StructuredLlmOutput:
+        messages = build_slot_fill_messages(
+            question=question,
+            intent=intent,
+            metadata_context=metadata_context,
+        )
+        result = self.client.chat_json(messages)
+        return _parse_structured_output(result)
+
+    def plan_sql(
+        self,
+        *,
+        question: str,
+        intent: dict[str, Any],
+        metadata_context: dict[str, Any],
+    ) -> StructuredLlmOutput:
+        messages = build_sql_plan_messages(
+            question=question,
+            intent=intent,
+            metadata_context=metadata_context,
+        )
+        result = self.client.chat_json(messages)
+        return _parse_structured_output(result)
+
+    def generate_sql(
+        self,
+        *,
+        question: str,
+        metadata_context: dict[str, Any],
+        intent: dict[str, Any] | None = None,
+        sql_plan: dict[str, Any] | None = None,
+    ) -> GeneratedSql:
+        messages = build_sql_generation_messages(
+            question,
+            metadata_context,
+            intent=intent,
+            sql_plan=sql_plan,
+        )
         result = self.client.chat_json(messages)
         return _parse_generated_sql(result)
 
@@ -52,6 +123,8 @@ class TextToSqlGenerator:
         *,
         question: str,
         metadata_context: dict[str, Any],
+        intent: dict[str, Any],
+        sql_plan: dict[str, Any],
         previous_sql: str,
         validation_report: dict[str, Any],
         execution_result: dict[str, Any],
@@ -59,12 +132,33 @@ class TextToSqlGenerator:
         messages = build_sql_repair_messages(
             question=question,
             metadata_context=metadata_context,
+            intent=intent,
+            sql_plan=sql_plan,
             previous_sql=previous_sql,
             validation_report=validation_report,
             execution_result=execution_result,
         )
         result = self.client.chat_json(messages)
         return _parse_generated_sql(result)
+
+    def explain_result(
+        self,
+        *,
+        question: str,
+        sql_plan: dict[str, Any],
+        sql: str,
+        execution_result: dict[str, Any],
+        result_check: dict[str, Any],
+    ) -> StructuredLlmOutput:
+        messages = build_result_explanation_messages(
+            question=question,
+            sql_plan=sql_plan,
+            sql=sql,
+            execution_result=execution_result,
+            result_check=result_check,
+        )
+        result = self.client.chat_json(messages)
+        return _parse_structured_output(result)
 
 
 def _parse_generated_sql(result: ChatCompletionResult) -> GeneratedSql:
@@ -91,6 +185,23 @@ def _parse_generated_sql(result: ChatCompletionResult) -> GeneratedSql:
     )
 
 
+def _parse_structured_output(result: ChatCompletionResult) -> StructuredLlmOutput:
+    payload = _loads_json_object(result.content)
+    confidence = payload.get("confidence", 0.0)
+    try:
+        confidence_value = float(confidence)
+    except (TypeError, ValueError):
+        confidence_value = 0.0
+
+    return StructuredLlmOutput(
+        payload=payload,
+        confidence=confidence_value,
+        model=result.model,
+        usage=result.usage,
+        raw_content=result.content,
+    )
+
+
 def _loads_json_object(content: str) -> dict[str, Any]:
     try:
         payload = json.loads(content)
@@ -111,4 +222,3 @@ def _clean_sql(sql: str) -> str:
     if sql.endswith(";"):
         sql = sql[:-1].strip()
     return sql
-

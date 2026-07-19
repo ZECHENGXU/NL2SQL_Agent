@@ -40,6 +40,49 @@ def _known_table_names() -> set[str]:
     return set(doc.get("tables", {}).keys())
 
 
+@lru_cache(maxsize=1)
+def _known_columns_by_table() -> dict[str, set[str]]:
+    doc = yaml.safe_load(SCHEMA_CATALOG_PATH.read_text(encoding="utf-8"))
+    return {
+        table_name: set(table.get("columns", {}).keys())
+        for table_name, table in doc.get("tables", {}).items()
+    }
+
+
+def _question(state: AgentState) -> str:
+    return state.get("normalized_question") or state.get("question", "")
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _merge_intent(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, list):
+            existing = list(merged.get(key, [])) if isinstance(merged.get(key), list) else []
+            seen = {str(item) for item in existing}
+            for item in value:
+                if str(item) not in seen:
+                    existing.append(item)
+                    seen.add(str(item))
+            merged[key] = existing
+        elif isinstance(value, dict) and isinstance(merged.get(key), dict):
+            nested = dict(merged[key])
+            nested.update({k: v for k, v in value.items() if v not in (None, "", [], {})})
+            merged[key] = nested
+        else:
+            merged[key] = value
+    return merged
+
+
 def init_run(state: AgentState) -> dict[str, Any]:
     return add_trace(state, "init_run", message="Initialized query run.")
 
@@ -67,14 +110,63 @@ def detect_followup(state: AgentState) -> dict[str, Any]:
     return update
 
 
-def parse_intent(repo: DemoCaseRepository, *, allow_unmatched: bool = False):
+def parse_intent(
+    repo: DemoCaseRepository,
+    *,
+    generator: TextToSqlGenerator | None = None,
+    sql_mode: str = "demo",
+    allow_unmatched: bool = False,
+):
     def node(state: AgentState) -> dict[str, Any]:
         case, score = repo.match(
-            state.get("normalized_question") or state.get("question", ""),
+            _question(state),
             state.get("matched_query_id"),
         )
         if allow_unmatched and case is not None and score < 0.85:
             case = None
+
+        if sql_mode == "llm" and generator is not None:
+            try:
+                parsed = generator.parse_intent(question=_question(state))
+            except LlmClientError as exc:
+                if case is None:
+                    update = {
+                        "missing_slots": ["LLM intent parsing failed."],
+                        "confidence": 0.0,
+                        "llm_error": str(exc),
+                    }
+                    update.update(add_trace(state, "parse_intent", status="failed", message=str(exc)))
+                    return update
+            else:
+                payload = parsed.payload
+                intent = dict(payload.get("intent") or {})
+                if case is not None:
+                    intent = _merge_intent(case.intent, intent)
+                update = {
+                    "matched_score": round(score, 4),
+                    "intent": intent,
+                    "missing_slots": [str(item) for item in _as_list(payload.get("missing_slots"))],
+                    "ambiguities": dict(payload.get("ambiguities") or {}),
+                    "confidence": parsed.confidence,
+                    "llm_intent": parsed.to_state(),
+                }
+                if case is not None:
+                    update["matched_query_id"] = case.query_id
+                update.update(
+                    add_trace(
+                        state,
+                        "parse_intent",
+                        message=(
+                            f"Parsed intent with {parsed.model}; matched demo case {case.query_id}."
+                            if case is not None
+                            else f"Parsed intent with {parsed.model}; no demo case matched."
+                        ),
+                        matched_score=round(score, 4),
+                        confidence=parsed.confidence,
+                    )
+                )
+                return update
+
         if case is None:
             if allow_unmatched:
                 update = {
@@ -176,23 +268,132 @@ def retrieve_metadata(repo: DemoCaseRepository, retriever: HybridMetadataRetriev
     return node
 
 
+def fill_slots(
+    *,
+    generator: TextToSqlGenerator | None = None,
+    sql_mode: str = "demo",
+):
+    def node(state: AgentState) -> dict[str, Any]:
+        if sql_mode != "llm":
+            update = {
+                "slot_report": {
+                    "mode": "demo",
+                    "resolved_terms": [],
+                    "assumptions": [],
+                }
+            }
+            update.update(add_trace(state, "fill_slots", message="Slot filling skipped in demo mode."))
+            return update
+
+        if generator is None:
+            update = {"llm_error": "LLM generator is not configured."}
+            update.update(add_trace(state, "fill_slots", status="failed", message=update["llm_error"]))
+            return update
+
+        try:
+            filled = generator.fill_slots(
+                question=_question(state),
+                intent=state.get("intent", {}),
+                metadata_context=state.get("metadata_context", {}),
+            )
+        except LlmClientError as exc:
+            update = {"llm_error": str(exc)}
+            update.update(add_trace(state, "fill_slots", status="failed", message=str(exc)))
+            return update
+
+        payload = filled.payload
+        intent_patch = dict(payload.get("intent_patch") or {})
+        intent = _merge_intent(state.get("intent", {}), intent_patch)
+        missing_slots = [str(item) for item in _as_list(payload.get("missing_slots"))]
+        ambiguities = dict(payload.get("ambiguities") or {})
+        slot_report = {
+            "resolved_terms": list(payload.get("resolved_terms") or []),
+            "assumptions": [str(item) for item in _as_list(payload.get("assumptions"))],
+            "confidence": filled.confidence,
+        }
+        update = {
+            "intent": intent,
+            "missing_slots": missing_slots,
+            "ambiguities": ambiguities,
+            "slot_report": slot_report,
+            "confidence": max(float(state.get("confidence", 0.0)), filled.confidence),
+            "llm_slot_fill": filled.to_state(),
+        }
+        update.update(
+            add_trace(
+                state,
+                "fill_slots",
+                message=f"Filled slots with {filled.model}.",
+                missing_slots=missing_slots,
+                confidence=filled.confidence,
+            )
+        )
+        return update
+
+    return node
+
+
 def resolve_product(state: AgentState) -> dict[str, Any]:
     return add_trace(state, "resolve_product", message="Product resolution currently handled by metadata context and SQL generation.")
 
 
-def plan_sql(state: AgentState) -> dict[str, Any]:
-    metadata = state.get("metadata_context", {})
-    matched_demo_case = metadata.get("matched_demo_case", {}) if isinstance(metadata, dict) else {}
-    sql_mode = state.get("sql_mode", "demo")
-    sql_plan = {
-        "strategy": "llm_text_to_sql" if sql_mode == "llm" else "deterministic_demo_sql",
-        "matched_query_id": state.get("matched_query_id"),
-        "tables": metadata.get("tables") or metadata.get("required_tables", []) or matched_demo_case.get("required_tables", []),
-        "metrics": metadata.get("metrics") or metadata.get("expected_metrics", []) or matched_demo_case.get("expected_metrics", []),
-    }
-    update = {"sql_plan": sql_plan}
-    update.update(add_trace(state, "plan_sql", message=f"Built {sql_plan['strategy']} plan."))
-    return update
+def plan_sql(
+    *,
+    generator: TextToSqlGenerator | None = None,
+    sql_mode: str = "demo",
+):
+    def node(state: AgentState) -> dict[str, Any]:
+        metadata = state.get("metadata_context", {})
+        matched_demo_case = metadata.get("matched_demo_case", {}) if isinstance(metadata, dict) else {}
+
+        if sql_mode == "llm":
+            if generator is None:
+                update = {"llm_error": "LLM generator is not configured."}
+                update.update(add_trace(state, "plan_sql", status="failed", message=update["llm_error"]))
+                return update
+
+            try:
+                planned = generator.plan_sql(
+                    question=_question(state),
+                    intent=state.get("intent", {}),
+                    metadata_context=metadata,
+                )
+            except LlmClientError as exc:
+                update = {"llm_error": str(exc)}
+                update.update(add_trace(state, "plan_sql", status="failed", message=str(exc)))
+                return update
+
+            payload = planned.payload
+            sql_plan = dict(payload.get("sql_plan") or {})
+            sql_plan.setdefault("strategy", "llm_text_to_sql")
+            sql_plan.setdefault("matched_query_id", state.get("matched_query_id"))
+            update = {
+                "sql_plan": sql_plan,
+                "confidence": planned.confidence,
+                "llm_plan": planned.to_state(),
+            }
+            update.update(
+                add_trace(
+                    state,
+                    "plan_sql",
+                    message=f"Planned SQL with {planned.model}.",
+                    confidence=planned.confidence,
+                    referenced_context_ids=payload.get("referenced_context_ids", []),
+                )
+            )
+            return update
+
+        sql_plan = {
+            "strategy": "deterministic_demo_sql",
+            "matched_query_id": state.get("matched_query_id"),
+            "tables": metadata.get("tables") or metadata.get("required_tables", []) or matched_demo_case.get("required_tables", []),
+            "metrics": metadata.get("metrics") or metadata.get("expected_metrics", []) or matched_demo_case.get("expected_metrics", []),
+        }
+        update = {"sql_plan": sql_plan}
+        update.update(add_trace(state, "plan_sql", message=f"Built {sql_plan['strategy']} plan."))
+        return update
+
+    return node
 
 
 def generate_sql(
@@ -210,8 +411,10 @@ def generate_sql(
 
             try:
                 generated = generator.generate_sql(
-                    question=state.get("normalized_question") or state.get("question", ""),
+                    question=_question(state),
                     metadata_context=state.get("metadata_context", {}),
+                    intent=state.get("intent", {}),
+                    sql_plan=state.get("sql_plan", {}),
                 )
             except LlmClientError as exc:
                 update = {"candidate_sql": "", "llm_error": str(exc)}
@@ -278,6 +481,36 @@ def validate_sql(state: AgentState) -> dict[str, Any]:
             unknown_tables = [table for table in referenced_tables if table not in _known_table_names()]
             if unknown_tables:
                 failures.append(f"SQL references unknown tables: {', '.join(unknown_tables)}.")
+
+            table_aliases: dict[str, str] = {}
+            for statement in parsed_statements:
+                if statement is None:
+                    continue
+                for table in statement.find_all(exp.Table):
+                    if table.name in cte_names:
+                        continue
+                    alias = table.alias_or_name
+                    if alias:
+                        table_aliases[alias] = table.name
+                    table_aliases[table.name] = table.name
+
+            columns_by_table = _known_columns_by_table()
+            unknown_columns = []
+            for statement in parsed_statements:
+                if statement is None:
+                    continue
+                for column in statement.find_all(exp.Column):
+                    qualifier = column.table
+                    column_name = column.name
+                    if not qualifier:
+                        continue
+                    source_table = table_aliases.get(qualifier)
+                    if not source_table:
+                        continue
+                    if column_name not in columns_by_table.get(source_table, set()):
+                        unknown_columns.append(f"{qualifier}.{column_name}")
+            if unknown_columns:
+                failures.append(f"SQL references unknown columns: {', '.join(sorted(set(unknown_columns)))}.")
         except Exception as exc:
             failures.append(f"SQL syntax parse failed: {exc}.")
 
@@ -288,7 +521,8 @@ def validate_sql(state: AgentState) -> dict[str, Any]:
             "readonly": "passed" if passed else "failed",
             "basic_syntax": "passed" if passed else "failed",
             "metadata_whitelist": "passed" if passed else "failed",
-            "metric_rules": "not_checked_in_m1",
+            "field_whitelist": "passed" if passed else "failed",
+            "metric_rules": "not_checked_in_m4",
         },
         "referenced_tables": referenced_tables,
         "errors": failures,
@@ -356,8 +590,10 @@ def repair_sql(
     if sql_mode == "llm" and generator is not None:
         try:
             generated = generator.repair_sql(
-                question=state.get("normalized_question") or state.get("question", ""),
+                question=_question(state),
                 metadata_context=state.get("metadata_context", {}),
+                intent=state.get("intent", {}),
+                sql_plan=state.get("sql_plan", {}),
                 previous_sql=state.get("candidate_sql", ""),
                 validation_report=state.get("validation_report", {}),
                 execution_result=state.get("execution_result", {}),
@@ -409,23 +645,70 @@ def human_review_or_explain(state: AgentState) -> dict[str, Any]:
     return update
 
 
-def render_answer(state: AgentState) -> dict[str, Any]:
+def _deterministic_answer(state: AgentState) -> str:
     result = state.get("execution_result", {})
     metadata = state.get("metadata_context", {})
     query_id = state.get("matched_query_id", "")
     if query_id:
-        answer = (
+        return (
             f"查询成功。匹配样例：{query_id}；场景：{metadata.get('scenario', '')}；"
             f"返回 {result.get('row_count', 0)} 行；执行耗时 {result.get('elapsed_ms', 0):.2f} ms。"
         )
-    else:
-        answer = (
-            "查询成功。自然语言问题已通过 LLM Text-to-SQL 路径生成并执行；"
-            f"返回 {result.get('row_count', 0)} 行；执行耗时 {result.get('elapsed_ms', 0):.2f} ms。"
-        )
-    update = {"final_answer": answer}
-    update.update(add_trace(state, "render_answer", message="Rendered final answer."))
-    return update
+    return (
+        "查询成功。自然语言问题已通过 LLM Text-to-SQL 路径生成并执行；"
+        f"返回 {result.get('row_count', 0)} 行；执行耗时 {result.get('elapsed_ms', 0):.2f} ms。"
+    )
+
+
+def render_answer(
+    *,
+    generator: TextToSqlGenerator | None = None,
+    sql_mode: str = "demo",
+):
+    def node(state: AgentState) -> dict[str, Any]:
+        if sql_mode == "llm" and generator is not None:
+            try:
+                explained = generator.explain_result(
+                    question=_question(state),
+                    sql_plan=state.get("sql_plan", {}),
+                    sql=state.get("candidate_sql", ""),
+                    execution_result=state.get("execution_result", {}),
+                    result_check=state.get("result_check", {}),
+                )
+            except LlmClientError as exc:
+                answer = _deterministic_answer(state)
+                update = {"final_answer": answer, "llm_error": str(exc)}
+                update.update(add_trace(state, "render_answer", status="fallback", message=f"LLM explanation failed: {exc}"))
+                return update
+
+            payload = explained.payload
+            answer = str(payload.get("final_answer") or _deterministic_answer(state))
+            result_explanation = {
+                "warnings": [str(item) for item in _as_list(payload.get("warnings"))],
+                "confidence": explained.confidence,
+            }
+            update = {
+                "final_answer": answer,
+                "result_explanation": result_explanation,
+                "confidence": max(float(state.get("confidence", 0.0)), explained.confidence),
+                "llm_result_explanation": explained.to_state(),
+            }
+            update.update(
+                add_trace(
+                    state,
+                    "render_answer",
+                    message=f"Rendered final answer with {explained.model}.",
+                    confidence=explained.confidence,
+                )
+            )
+            return update
+
+        answer = _deterministic_answer(state)
+        update = {"final_answer": answer}
+        update.update(add_trace(state, "render_answer", message="Rendered final answer."))
+        return update
+
+    return node
 
 
 def persist_state(state: AgentState) -> dict[str, Any]:

@@ -35,6 +35,12 @@ class AgentState(TypedDict, total=False):
     llm_generation: dict[str, Any]
     llm_repair: dict[str, Any]
     llm_error: str
+    slot_report: dict[str, Any]
+    result_explanation: dict[str, Any]
+    llm_intent: dict[str, Any]
+    llm_slot_fill: dict[str, Any]
+    llm_plan: dict[str, Any]
+    llm_result_explanation: dict[str, Any]
 
 
 def new_agent_state(
