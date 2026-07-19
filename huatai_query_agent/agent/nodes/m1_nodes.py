@@ -6,6 +6,7 @@ from typing import Any
 from huatai_query_agent.agent.demo_cases import DemoCaseRepository
 from huatai_query_agent.agent.state import AgentState, add_trace
 from huatai_query_agent.executors.base import SqlExecutor
+from huatai_query_agent.retrieval.hybrid_retriever import HybridMetadataRetriever
 
 
 DANGEROUS_SQL_PATTERN = re.compile(
@@ -92,10 +93,10 @@ def check_intent_slots(state: AgentState) -> dict[str, Any]:
     return add_trace(state, "check_intent_slots", status=status, message=message)
 
 
-def retrieve_metadata(repo: DemoCaseRepository):
+def retrieve_metadata(repo: DemoCaseRepository, retriever: HybridMetadataRetriever | None = None):
     def node(state: AgentState) -> dict[str, Any]:
         case = repo.get(state["matched_query_id"])
-        metadata_context = {
+        fallback_context = {
             "source": "query_examples.yaml",
             "scenario": case.scenario,
             "difficulty": case.difficulty,
@@ -103,9 +104,21 @@ def retrieve_metadata(repo: DemoCaseRepository):
             "expected_metrics": case.expected_metrics,
             "example_question": case.question,
         }
-        context_ids = [f"example_sql.{case.query_id}"]
-        context_ids.extend(f"table.{table}" for table in case.required_tables)
-        context_ids.extend(f"metric.{metric}" for metric in case.expected_metrics)
+        fallback_context_ids = [f"example_sql.{case.query_id}"]
+        fallback_context_ids.extend(f"table.{table}" for table in case.required_tables)
+        fallback_context_ids.extend(f"metric.{metric}" for metric in case.expected_metrics)
+
+        if retriever is not None:
+            metadata_context = retriever.build_context(
+                state.get("normalized_question") or case.question,
+                top_k=16,
+            )
+            metadata_context["matched_demo_case"] = fallback_context
+            context_ids = list(metadata_context.get("context_ids", []))
+        else:
+            metadata_context = fallback_context
+            context_ids = fallback_context_ids
+
         update = {"metadata_context": metadata_context, "context_ids": context_ids}
         update.update(
             add_trace(
@@ -126,11 +139,12 @@ def resolve_product(state: AgentState) -> dict[str, Any]:
 
 def plan_sql(state: AgentState) -> dict[str, Any]:
     metadata = state.get("metadata_context", {})
+    matched_demo_case = metadata.get("matched_demo_case", {}) if isinstance(metadata, dict) else {}
     sql_plan = {
         "strategy": "deterministic_demo_sql",
         "matched_query_id": state.get("matched_query_id"),
-        "tables": metadata.get("required_tables", []),
-        "metrics": metadata.get("expected_metrics", []),
+        "tables": metadata.get("tables") or metadata.get("required_tables", []) or matched_demo_case.get("required_tables", []),
+        "metrics": metadata.get("metrics") or metadata.get("expected_metrics", []) or matched_demo_case.get("expected_metrics", []),
     }
     update = {"sql_plan": sql_plan}
     update.update(add_trace(state, "plan_sql", message="Built deterministic SQL plan."))
@@ -276,4 +290,3 @@ def persist_state(state: AgentState) -> dict[str, Any]:
     update = {"thread_summary": summary}
     update.update(add_trace(state, "persist_state", message="Persisted in-memory summary for M1."))
     return update
-

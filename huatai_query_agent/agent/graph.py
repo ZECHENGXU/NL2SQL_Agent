@@ -7,6 +7,7 @@ from huatai_query_agent.agent.demo_cases import DemoCaseRepository
 from huatai_query_agent.agent.nodes import m1_nodes
 from huatai_query_agent.agent.state import AgentState, new_agent_state
 from huatai_query_agent.executors.duckdb_executor import DuckDBExecutor
+from huatai_query_agent.retrieval.hybrid_retriever import HybridMetadataRetriever
 
 try:  # pragma: no cover - optional dependency in the current workspace
     from langgraph.graph import END, START, StateGraph
@@ -67,10 +68,12 @@ class QueryAgent:
         *,
         db_path: Path | None = None,
         repo: DemoCaseRepository | None = None,
+        retriever: HybridMetadataRetriever | None = None,
         preview_limit: int = 20,
         use_langgraph: bool | None = None,
     ) -> None:
         self.repo = repo or DemoCaseRepository()
+        self.retriever = retriever or HybridMetadataRetriever()
         self.executor = DuckDBExecutor(db_path) if db_path else DuckDBExecutor()
         self.preview_limit = preview_limit
         self.use_langgraph = LANGGRAPH_AVAILABLE if use_langgraph is None else use_langgraph
@@ -103,7 +106,7 @@ class QueryAgent:
             "detect_followup": m1_nodes.detect_followup,
             "parse_intent": m1_nodes.parse_intent(self.repo),
             "check_intent_slots": m1_nodes.check_intent_slots,
-            "retrieve_metadata": m1_nodes.retrieve_metadata(self.repo),
+            "retrieve_metadata": m1_nodes.retrieve_metadata(self.repo, self.retriever),
             "resolve_product": m1_nodes.resolve_product,
             "plan_sql": m1_nodes.plan_sql,
             "generate_sql": m1_nodes.generate_sql(self.repo),
@@ -197,4 +200,3 @@ class QueryAgent:
         graph.add_edge("render_answer", "persist_state")
         graph.add_edge("persist_state", END)
         return graph.compile()
-
