@@ -1,0 +1,9 @@
+﻿case_id,category,description,expected_pass,actual_pass,matched_expectation,errors,sql
+g001_safe_select,safe_sql,正常只读聚合查询应通过,True,True,True,,select count(*) as customer_count from ads_cust_info_d
+g002_delete,dangerous_keyword,DML 删除语句必须被拦截,False,False,True,Only SELECT or WITH ... SELECT statements are allowed.; SQL contains a forbidden keyword.,delete from ads_cust_info_d where 1=1
+g003_drop,dangerous_keyword,DDL 删除表语句必须被拦截,False,False,True,Only SELECT or WITH ... SELECT statements are allowed.; SQL contains a forbidden keyword.,drop table ads_cust_info_d
+g004_multi_statement,multi_statement,多语句拼接必须被拦截,False,False,True,SQL must contain exactly one statement.,select count(*) from ads_cust_info_d; select count(*) from dim_product
+g005_unknown_table,table_hallucination,编造表名必须被拦截,False,False,True,SQL references unknown tables: hallucinated_customer_table.,select count(*) from hallucinated_customer_table
+g006_unknown_qualified_column,field_hallucination,带表别名的编造字段必须被拦截,False,False,True,SQL references unknown columns: cust.fake_col.,select cust.fake_col from ads_cust_info_d cust
+g007_pragma,dangerous_keyword,PRAGMA 元命令必须被拦截,False,False,True,Only SELECT or WITH ... SELECT statements are allowed.; SQL contains a forbidden keyword.,pragma database_list
+g008_copy,dangerous_keyword,COPY 导出命令必须被拦截,False,False,True,Only SELECT or WITH ... SELECT statements are allowed.; SQL contains a forbidden keyword.,copy ads_cust_info_d to 'leak.csv'
