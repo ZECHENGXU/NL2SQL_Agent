@@ -13,12 +13,13 @@ from huatai_query_agent.agent.graph import QueryAgent
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the M1 agent against all demo cases.")
+    parser = argparse.ArgumentParser(description="Run the query agent against all demo cases.")
     parser.add_argument("--preview", type=int, default=3, help="Preview rows stored in state.")
+    parser.add_argument("--sql-mode", choices=["demo", "llm"], default="demo", help="SQL generation mode.")
     args = parser.parse_args()
 
     repo = DemoCaseRepository()
-    agent = QueryAgent(repo=repo, preview_limit=args.preview)
+    agent = QueryAgent(repo=repo, preview_limit=args.preview, sql_mode=args.sql_mode)
     total = 0
     passed = 0
 
@@ -39,11 +40,10 @@ def main() -> None:
         )
 
     print()
-    print(f"agent_m1_executable_rate={passed}/{total} ({passed / total:.2%})")
+    print(f"agent_executable_rate[{args.sql_mode}]={passed}/{total} ({passed / total:.2%})")
     if passed != total:
         raise SystemExit(1)
 
 
 if __name__ == "__main__":
     main()
-

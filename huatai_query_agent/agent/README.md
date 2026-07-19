@@ -43,6 +43,24 @@ Run by question text:
 python -m huatai_query_agent.agent.run_agent --question "2026年Q1交易过招商银行A股，并且在Q1末普通账户持有中国平安A股的客户有哪些？"
 ```
 
+Check DeepSeek API connection:
+
+```powershell
+python -m huatai_query_agent.llm.check_connection
+```
+
+Run one case with LLM SQL generation:
+
+```powershell
+python -m huatai_query_agent.agent.run_agent --query-id q005 --sql-mode llm --preview 5
+```
+
+Run an arbitrary natural language question with LLM SQL generation:
+
+```powershell
+python -m huatai_query_agent.agent.run_agent --question "学历本科以上的男性客户，年龄超过50岁的有多少个？" --sql-mode llm --preview 5
+```
+
 Batch evaluation:
 
 ```powershell
@@ -53,14 +71,30 @@ Expected M1 result:
 
 ```text
 langgraph_available=True
-agent_m1_executable_rate=7/7 (100.00%)
+agent_executable_rate[demo]=7/7 (100.00%)
 ```
+
+## LLM Configuration
+
+LLM settings are loaded from project `.env`:
+
+```text
+HUATAI_LLM_PROVIDER=deepseek
+HUATAI_LLM_API_KEY=sk-your-key
+HUATAI_LLM_BASE_URL=https://api.deepseek.com
+HUATAI_LLM_MODEL=deepseek-v4-pro
+HUATAI_LLM_TIMEOUT_SECONDS=60
+HUATAI_LLM_TEMPERATURE=0
+HUATAI_LLM_MAX_TOKENS=4096
+```
+
+`.env` is ignored by git. Use `.env.example` as the shareable template.
 
 ## Next implementation step
 
-Upgrade the deterministic M1 path into an LLM-assisted Text-to-SQL Agent:
+Upgrade the current LLM-assisted path into a stronger Text-to-SQL Agent:
 
 1. Replace hashing vectors with a local semantic embedding API.
-2. Add local OpenAI-compatible model API calls for intent parsing, SQL planning, SQL generation, and SQL repair.
-3. Add `sqlglot`-based SQL guardrail validation.
+2. Split intent parsing, SQL planning, SQL generation, and SQL repair into separately evaluated LLM nodes.
+3. Add metric-level SQL rule validation beyond table whitelist and read-only checks.
 4. Add evaluation cases beyond the 7 official examples.

@@ -7,6 +7,7 @@ from huatai_query_agent.agent.demo_cases import DemoCaseRepository
 from huatai_query_agent.agent.nodes import m1_nodes
 from huatai_query_agent.agent.state import AgentState, new_agent_state
 from huatai_query_agent.executors.duckdb_executor import DuckDBExecutor
+from huatai_query_agent.llm.sql_generator import TextToSqlGenerator
 from huatai_query_agent.retrieval.hybrid_retriever import HybridMetadataRetriever
 
 try:  # pragma: no cover - optional dependency in the current workspace
@@ -69,11 +70,17 @@ class QueryAgent:
         db_path: Path | None = None,
         repo: DemoCaseRepository | None = None,
         retriever: HybridMetadataRetriever | None = None,
+        llm_generator: TextToSqlGenerator | None = None,
+        sql_mode: str = "demo",
         preview_limit: int = 20,
         use_langgraph: bool | None = None,
     ) -> None:
+        if sql_mode not in {"demo", "llm"}:
+            raise ValueError("sql_mode must be 'demo' or 'llm'.")
         self.repo = repo or DemoCaseRepository()
         self.retriever = retriever or HybridMetadataRetriever()
+        self.sql_mode = sql_mode
+        self.llm_generator = llm_generator or (TextToSqlGenerator.from_env() if sql_mode == "llm" else None)
         self.executor = DuckDBExecutor(db_path) if db_path else DuckDBExecutor()
         self.preview_limit = preview_limit
         self.use_langgraph = LANGGRAPH_AVAILABLE if use_langgraph is None else use_langgraph
@@ -90,6 +97,7 @@ class QueryAgent:
         if query_id and not question:
             question = self.repo.get(query_id).question
         state = new_agent_state(question=question, thread_id=thread_id, max_retries=max_retries)
+        state["sql_mode"] = self.sql_mode
         if query_id:
             state["matched_query_id"] = query_id
 
@@ -104,16 +112,24 @@ class QueryAgent:
             "load_thread_context": m1_nodes.load_thread_context,
             "normalize_question": m1_nodes.normalize_question,
             "detect_followup": m1_nodes.detect_followup,
-            "parse_intent": m1_nodes.parse_intent(self.repo),
+            "parse_intent": m1_nodes.parse_intent(self.repo, allow_unmatched=self.sql_mode == "llm"),
             "check_intent_slots": m1_nodes.check_intent_slots,
             "retrieve_metadata": m1_nodes.retrieve_metadata(self.repo, self.retriever),
             "resolve_product": m1_nodes.resolve_product,
             "plan_sql": m1_nodes.plan_sql,
-            "generate_sql": m1_nodes.generate_sql(self.repo),
+            "generate_sql": m1_nodes.generate_sql(
+                self.repo,
+                generator=self.llm_generator,
+                sql_mode=self.sql_mode,
+            ),
             "validate_sql": m1_nodes.validate_sql,
             "execute_sql": m1_nodes.execute_sql(self.executor, preview_limit=self.preview_limit),
             "validate_result": m1_nodes.validate_result,
-            "repair_sql": m1_nodes.repair_sql,
+            "repair_sql": lambda state: m1_nodes.repair_sql(
+                state,
+                generator=self.llm_generator,
+                sql_mode=self.sql_mode,
+            ),
             "ask_clarification": m1_nodes.ask_clarification,
             "human_review_or_explain": m1_nodes.human_review_or_explain,
             "render_answer": m1_nodes.render_answer,

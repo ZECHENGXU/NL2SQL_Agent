@@ -38,17 +38,21 @@ def print_state_summary(state: dict[str, Any], *, as_json: bool = False) -> None
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the M1 query agent skeleton.")
+    parser = argparse.ArgumentParser(description="Run the Huatai query agent.")
     parser.add_argument("--query-id", help="Run one demo query id, for example q001.")
     parser.add_argument("--question", help="Run a natural language question.")
     parser.add_argument("--all", action="store_true", help="Run all 7 demo queries.")
+    parser.add_argument("--sql-mode", choices=["demo", "llm"], default="demo", help="SQL generation mode.")
+    parser.add_argument("--llm", action="store_true", help="Shortcut for --sql-mode llm.")
     parser.add_argument("--preview", type=int, default=5, help="Rows to print per query.")
     parser.add_argument("--json", action="store_true", help="Print full state as JSON.")
     args = parser.parse_args()
 
+    sql_mode = "llm" if args.llm else args.sql_mode
     repo = DemoCaseRepository()
-    agent = QueryAgent(repo=repo, preview_limit=args.preview)
+    agent = QueryAgent(repo=repo, preview_limit=args.preview, sql_mode=sql_mode)
     print(f"langgraph_available={LANGGRAPH_AVAILABLE}")
+    print(f"sql_mode={sql_mode}")
 
     if args.all:
         failures = 0
@@ -74,4 +78,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

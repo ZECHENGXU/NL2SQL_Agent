@@ -31,6 +31,10 @@ class AgentState(TypedDict, total=False):
     final_answer: str
     audit_record: dict[str, Any]
     trace: list[dict[str, Any]]
+    sql_mode: str
+    llm_generation: dict[str, Any]
+    llm_repair: dict[str, Any]
+    llm_error: str
 
 
 def new_agent_state(
@@ -73,4 +77,3 @@ def add_trace(
         event.update(extra)
     trace.append(event)
     return {"trace": trace}
-
