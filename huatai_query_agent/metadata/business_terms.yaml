@@ -1,0 +1,139 @@
+version: "1.0"
+updated_at: "2026-07-19"
+description: "业务术语、别名与底层字段/编码映射"
+
+terms:
+  customer_level:
+    field: "ads_cust_info_d.cust_lvl_cd"
+    dictionary_type: "100"
+    values:
+      - aliases: ["钻石卡", "钻石客户", "紫金理财钻石卡客户"]
+        code: "1000001"
+        standard_name: "紫金理财钻石卡客户"
+      - aliases: ["白金卡", "白金客户", "紫金理财白金卡客户"]
+        code: "1000002"
+        standard_name: "紫金理财白金卡客户"
+      - aliases: ["金卡", "金卡客户", "紫金理财金卡客户"]
+        code: "1000003"
+        standard_name: "紫金理财金卡客户"
+      - aliases: ["银卡", "银卡客户", "紫金理财银卡客户"]
+        code: "1000004"
+        standard_name: "紫金理财银卡客户"
+      - aliases: ["理财卡", "普通理财卡", "紫金理财卡客户"]
+        code: "1000005"
+        standard_name: "紫金理财卡客户"
+      - aliases: ["未评级", "空等级", "空"]
+        code: "1000006"
+        standard_name: "空"
+
+  gender:
+    field: "ads_cust_info_d.gender_cd"
+    dictionary_type: "500"
+    values:
+      - aliases: ["男", "男性"]
+        code: "5000002"
+        standard_name: "男"
+      - aliases: ["女", "女性"]
+        code: "5000003"
+        standard_name: "女"
+      - aliases: ["未知性别"]
+        code: "5000001"
+        standard_name: "未知"
+
+  education:
+    field: "ads_cust_info_d.edu_cd"
+    dictionary_type: "600"
+    values:
+      - aliases: ["博士"]
+        code: "6000002"
+        standard_name: "博士"
+      - aliases: ["硕士", "研究生"]
+        code: "6000003"
+        standard_name: "硕士"
+      - aliases: ["学士", "本科", "大学本科"]
+        code: "6000004"
+        standard_name: "学士"
+      - aliases: ["大专", "专科"]
+        code: "6000005"
+        standard_name: "大专"
+      - aliases: ["中专"]
+        code: "6000006"
+        standard_name: "中专"
+      - aliases: ["高中"]
+        code: "6000007"
+        standard_name: "高中"
+      - aliases: ["初中及以下", "初中及其以下"]
+        code: "6000008"
+        standard_name: "初中及其以下"
+    combined_terms:
+      - name: "本科以上"
+        aliases: ["大学本科以上", "本科及以上", "学士及以上"]
+        sql_condition: "edu_cd in ('6000002','6000003','6000004')"
+      - name: "大专及以上"
+        aliases: ["专科及以上"]
+        sql_condition: "edu_cd in ('6000002','6000003','6000004','6000005')"
+
+  account_status:
+    field: "ads_cust_info_d.cust_status"
+    dictionary_type: "200"
+    values:
+      - aliases: ["正常", "正常客户"]
+        code: "2000001"
+        standard_name: "正常"
+      - aliases: ["销户", "已销户"]
+        code: "2000004"
+        standard_name: "销户"
+      - aliases: ["休眠", "休眠已确认"]
+        code: "2000005"
+        standard_name: "休眠已确认"
+
+  account_source:
+    field_candidates: ["dws_cust_fin_d.sys_source", "dwd_cust_hold_d.sys_source", "dwd_cust_tran_d.sys_source"]
+    values:
+      - aliases: ["普通账户", "普通"]
+        code: "nm"
+      - aliases: ["信用账户", "融资融券账户", "两融账户"]
+        code: "fc"
+
+  currency:
+    field_candidates: ["dwd_cust_hold_d.ccy", "dwd_cust_tran_d.ccy"]
+    values:
+      - aliases: ["人民币", "CNY"]
+        code: "0"
+      - aliases: ["美元", "USD"]
+        code: "1"
+      - aliases: ["港币", "HKD"]
+        code: "2"
+
+product_terms:
+  classification_rules:
+    - term: "股票"
+      sql_condition: "up_prdt_type_name = '股票'"
+    - term: "A股"
+      sql_condition: "prdt_type_name = 'A股'"
+    - term: "科创板"
+      sql_condition: "prdt_type_name = '科创板'"
+    - term: "创业板"
+      sql_condition: "prdt_type_name = '创业板'"
+    - term: "ETF"
+      sql_condition: "prdt_type_name = 'ETF'"
+    - term: "LOF"
+      sql_condition: "prdt_type_name = 'LOF'"
+    - term: "债券"
+      sql_condition: "up_prdt_type_name = '债券'"
+    - term: "基金"
+      sql_condition: "up_prdt_type_name = '开放式基金'"
+  name_matching_rules:
+    - term: "中国平安A股"
+      sql_condition: "prdt_name = '中国平安' and prdt_type_name = 'A股'"
+    - term: "招商银行A股"
+      sql_condition: "prdt_name = '招商银行' and prdt_type_name = 'A股'"
+    - term: "比亚迪A股"
+      sql_condition: "prdt_name = '比亚迪' and prdt_type_name = 'A股'"
+    - term: "紫金矿业A股"
+      sql_condition: "prdt_name = '紫金矿业' and prdt_type_name = 'A股'"
+    - term: "华宝油气"
+      sql_condition: "prdt_name = '华宝油气'"
+    - term: "南钢"
+      sql_condition: "prdt_name like '%南钢%'"
+      ambiguity_note: "存在南钢股份、南钢配售、南钢债等多种产品；如用户明确股票，应追加 up_prdt_type_name='股票'"

@@ -1,0 +1,99 @@
+version: "1.0"
+updated_at: "2026-07-19"
+description: "赛题7条样例问答的结构化拆解，作为演示入口和评测集种子"
+
+examples:
+  - id: "q001"
+    question: "学历本科以上的男性客户，年龄超过50岁的有多少个？"
+    scenario: "客户圈选"
+    difficulty: "simple"
+    intent:
+      target: "客户数量"
+      dimensions: []
+      filters:
+        - "学历本科以上"
+        - "男性"
+        - "年龄 > 50"
+    required_tables: ["ads_cust_info_d"]
+    optional_tables: ["dim_public"]
+    expected_metrics: ["count"]
+
+  - id: "q002"
+    question: "不同年龄段的客户总资产分布情况如何？"
+    scenario: "资产分析"
+    difficulty: "medium"
+    intent:
+      target: "按年龄段汇总客户总资产"
+      dimensions: ["年龄段"]
+      filters:
+        - "客户快照日=20260531"
+        - "资产日期=20260331"
+    required_tables: ["ads_cust_info_d", "dws_cust_aset_d"]
+    expected_metrics: ["total_asset"]
+    grouping_rule: "年龄分箱：<30, [30,50), [50,60), >=60"
+
+  - id: "q003"
+    question: "钻石卡男性客户、年龄大于40岁、持有比亚迪市值超过1000元，计算2026年Q1盈亏。"
+    scenario: "综合客户圈选与盈亏计算"
+    difficulty: "complex"
+    intent:
+      target: "客户Q1盈亏"
+      filters:
+        - "钻石卡客户"
+        - "男性"
+        - "年龄 > 40"
+        - "期末持有比亚迪A股"
+        - "持有市值 > 1000"
+    required_tables: ["ads_cust_info_d", "dwd_cust_hold_d", "dim_product", "dws_cust_aset_d", "dws_cust_fin_d"]
+    expected_metrics: ["period_profit_loss", "holding_market_value", "total_asset", "asset_inflow", "asset_outflow"]
+    product_matching_note: "比亚迪存在A股、港股通、收益凭证和债券等多种相关产品；样例SQL明确使用A股，应过滤 prdt_name='比亚迪' and prdt_type_name='A股'"
+
+  - id: "q004"
+    question: "分公司和营业部的客户省份分布统计。"
+    scenario: "客户地域分布"
+    difficulty: "simple"
+    intent:
+      target: "客户数量"
+      dimensions: ["上级分公司", "营业部", "省份", "城市"]
+    required_tables: ["ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["count"]
+
+  - id: "q005"
+    question: "2026年Q1交易过招商银行A股，并且在Q1末普通账户持有中国平安A股的客户有哪些？"
+    scenario: "交易与持仓交叉筛选"
+    difficulty: "complex"
+    intent:
+      target: "客户列表"
+      filters:
+        - "Q1交易招商银行A股"
+        - "Q1期末普通账户持有中国平安A股"
+    required_tables: ["dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["transaction_amount"]
+
+  - id: "q006"
+    question: "2026年Q1日均资产大于30万，且股票交易金额大于10万的客户，持有哪些产品类型？"
+    scenario: "客户筛选与持仓产品分布"
+    difficulty: "complex"
+    intent:
+      target: "产品分类持仓市值分布"
+      filters:
+        - "Q1日均资产 > 300000"
+        - "Q1股票交易金额 > 100000"
+        - "期末持仓日期=20260331"
+      dimensions: ["产品一级分类", "产品二级分类"]
+    required_tables: ["dws_cust_aset_d", "dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["average_daily_asset", "transaction_amount", "holding_market_value"]
+
+  - id: "q007"
+    question: "查询2026年1月10日至2026年2月15日期间，科创板交易金额超过25万的客户营业部分布。"
+    scenario: "交易分析与营业部分布"
+    difficulty: "medium"
+    intent:
+      target: "按分公司/营业部汇总交易金额"
+      filters:
+        - "交易日期 between 20260110 and 20260215"
+        - "产品二级分类=科创板"
+        - "客户交易金额 > 250000"
+      dimensions: ["上级分公司", "营业部"]
+    required_tables: ["dwd_cust_tran_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["transaction_amount"]

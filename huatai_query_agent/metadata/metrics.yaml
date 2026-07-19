@@ -1,0 +1,98 @@
+version: "1.0"
+updated_at: "2026-07-19"
+description: "指标口径定义，用于SQL生成、指标合法性校验和结果解释"
+
+metrics:
+  total_asset:
+    name_zh: "客户总资产"
+    aliases: ["总资产", "客户资产", "资产"]
+    source_table: "dws_cust_aset_d"
+    expression: "coalesce(nm_tot_aset,0) + coalesce(fc_pur_aset,0)"
+    aggregation_expression: "sum(coalesce(nm_tot_aset,0) + coalesce(fc_pur_aset,0))"
+    description: "普通账户总资产 + 信用账户净资产"
+
+  normal_total_asset:
+    name_zh: "普通账户总资产"
+    aliases: ["普通账户资产", "普通总资产"]
+    source_table: "dws_cust_aset_d"
+    expression: "coalesce(nm_tot_aset,0)"
+
+  credit_net_asset:
+    name_zh: "信用账户净资产"
+    aliases: ["信用资产", "两融净资产"]
+    source_table: "dws_cust_aset_d"
+    expression: "coalesce(fc_pur_aset,0)"
+
+  total_cash_asset:
+    name_zh: "总现金资产"
+    aliases: ["现金资产", "现金余额"]
+    source_table: "dws_cust_aset_d"
+    expression: "coalesce(nm_bal,0) + coalesce(fc_bal,0)"
+    aggregation_expression: "sum(coalesce(nm_bal,0) + coalesce(fc_bal,0))"
+
+  average_daily_asset:
+    name_zh: "日均资产"
+    aliases: ["平均资产", "日均总资产"]
+    source_table: "dws_cust_aset_d"
+    expression: "sum(coalesce(nm_tot_aset,0) + coalesce(fc_pur_aset,0)) / {day_count}"
+    q1_day_count: 90
+    description: "指定期间每日总资产之和 / 自然日天数；2026年Q1按90天计算"
+
+  transaction_amount:
+    name_zh: "交易金额"
+    aliases: ["成交金额", "买卖金额", "股票交易金额"]
+    source_table: "dwd_cust_tran_d"
+    expression: "coalesce(buy_amt,0) + coalesce(sell_amt,0)"
+    aggregation_expression: "sum(coalesce(buy_amt,0) + coalesce(sell_amt,0))"
+    description: "买入金额 + 卖出金额"
+
+  transaction_count:
+    name_zh: "交易次数"
+    aliases: ["成交次数", "买卖次数"]
+    source_table: "dwd_cust_tran_d"
+    expression: "coalesce(buy_cnt,0) + coalesce(sell_cnt,0)"
+    aggregation_expression: "sum(coalesce(buy_cnt,0) + coalesce(sell_cnt,0))"
+
+  holding_market_value:
+    name_zh: "持有市值"
+    aliases: ["持仓市值", "市值"]
+    source_table: "dwd_cust_hold_d"
+    expression: "coalesce(mkt_val,0)"
+    aggregation_expression: "sum(coalesce(mkt_val,0))"
+
+  asset_inflow:
+    name_zh: "资金流入"
+    aliases: ["流入", "入金", "资产流入"]
+    source_table: "dws_cust_fin_d"
+    expression: "coalesce(cash_in,0) + coalesce(tran_in,0) + coalesce(assign_in,0)"
+    aggregation_expression: "sum(coalesce(cash_in,0) + coalesce(tran_in,0) + coalesce(assign_in,0))"
+
+  asset_outflow:
+    name_zh: "资金流出"
+    aliases: ["流出", "出金", "资产流出"]
+    source_table: "dws_cust_fin_d"
+    expression: "coalesce(cash_out,0) + coalesce(tran_out,0) + coalesce(assign_out,0)"
+    aggregation_expression: "sum(coalesce(cash_out,0) + coalesce(tran_out,0) + coalesce(assign_out,0))"
+
+  period_profit_loss:
+    name_zh: "区间盈亏"
+    aliases: ["盈亏", "投资盈亏", "Q1盈亏"]
+    source_tables: ["dws_cust_aset_d", "dws_cust_fin_d"]
+    expression: "end_total_asset - begin_total_asset + asset_outflow - asset_inflow"
+    description: "期末总资产 - 期初总资产 + 区间资金流出 - 区间资金流入，用于排除出入金对资产变化的影响"
+
+time_periods:
+  q1_2026:
+    aliases: ["2026年Q1", "26年Q1", "一季度", "第一季度"]
+    start_date: "20260101"
+    end_date: "20260331"
+    day_count: 90
+  q1_2026_begin:
+    aliases: ["Q1期初", "一季度期初"]
+    date: "20260101"
+  q1_2026_end:
+    aliases: ["Q1期末", "一季度期末", "期末"]
+    date: "20260331"
+  customer_snapshot:
+    aliases: ["客户当前快照", "客户画像快照"]
+    date: "20260531"

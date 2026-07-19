@@ -1,0 +1,31 @@
+# Local environment
+.env
+.venv/
+venv/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated databases and runtime state
+huatai_query_agent/data/*.duckdb
+huatai_query_agent/vectorstore/
+huatai_query_agent/runtime/
+
+# Raw competition files and local binary exports
+原始文件/
+*.pdf
+
+# Legacy/duplicate planning artifacts kept locally but outside the new project repo
+01_元数据与业务术语映射文档 - 副本.md
+成员分工表.md
+角色*.md
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

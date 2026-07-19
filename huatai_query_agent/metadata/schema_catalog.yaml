@@ -1,0 +1,178 @@
+version: "1.0"
+updated_at: "2026-07-19"
+description: "华泰证券客户营销智能问数结构化表元数据"
+
+tables:
+  ads_cust_info_d:
+    layer: "ADS"
+    name_zh: "客户信息表"
+    grain: "客户-快照日"
+    data_date_range: "20260531"
+    row_count: 500
+    primary_keys: ["data_dt", "pty_id"]
+    business_usage:
+      - "客户画像"
+      - "客户圈选"
+      - "客户等级、年龄、性别、学历、职业、地域、营业部归属分析"
+    columns:
+      data_dt: {type: "varchar(8)", name_zh: "日期", description: "客户信息快照日期"}
+      pty_id: {type: "varchar(32)", name_zh: "客户号", description: "客户唯一标识"}
+      sor_pty_id: {type: "varchar(32)", name_zh: "经纪客户号", description: "经纪业务系统客户号"}
+      cust_lvl_cd: {type: "varchar(12)", name_zh: "客户等级", description: "紫金理财等级编码", dictionary_type: "100"}
+      cust_status: {type: "varchar(12)", name_zh: "账户状态", description: "客户账户状态编码", dictionary_type: "200"}
+      cust_type: {type: "varchar(1)", name_zh: "客户类型", description: "当前数据均为P，表示个人客户"}
+      prov_name: {type: "varchar(50)", name_zh: "省份", description: "客户所在省份"}
+      city_name: {type: "varchar(50)", name_zh: "城市", description: "客户所在城市"}
+      birth_dt: {type: "varchar(8)", name_zh: "出生日期", description: "格式yyyymmdd"}
+      cust_age: {type: "numeric(20,0)", name_zh: "年龄", description: "客户年龄，实测范围42-87岁"}
+      name: {type: "varchar(40)", name_zh: "姓名", description: "脱敏姓名"}
+      gender_cd: {type: "varchar(12)", name_zh: "性别代码", description: "性别编码", dictionary_type: "500"}
+      edu_cd: {type: "varchar(32)", name_zh: "学历代码", description: "学历编码", dictionary_type: "600"}
+      prof_cd: {type: "varchar(100)", name_zh: "职业类型编码", description: "职业编码", dictionary_type: "700"}
+      org_id: {type: "varchar(100)", name_zh: "所属营业部ID", description: "关联dim_branch.org_id"}
+
+  dws_cust_aset_d:
+    layer: "DWS"
+    name_zh: "客户资产日汇总"
+    grain: "客户-日期"
+    data_date_range: "20260101-20260331"
+    row_count: 43684
+    primary_keys: ["data_dt", "pty_id"]
+    business_usage:
+      - "客户总资产"
+      - "日均资产"
+      - "期初资产"
+      - "期末资产"
+      - "现金资产"
+    columns:
+      data_dt: {type: "varchar(8)", name_zh: "日期", description: "资产快照日期"}
+      pty_id: {type: "varchar(32)", name_zh: "客户号", description: "客户唯一标识"}
+      nm_tot_aset: {type: "numeric(20,4)", name_zh: "普通账户总资产", description: "普通账户总资产"}
+      nm_bal: {type: "numeric(20,4)", name_zh: "普通账户现金资产", description: "普通账户现金余额"}
+      fc_pur_aset: {type: "numeric(20,4)", name_zh: "信用账户净资产", description: "信用账户自有净资产"}
+      fc_bal: {type: "numeric(20,4)", name_zh: "信用账户现金资产", description: "信用账户现金余额"}
+
+  dws_cust_fin_d:
+    layer: "DWS"
+    name_zh: "客户资金流动日事实"
+    grain: "客户-日期-系统来源"
+    data_date_range: "20260105-20260331"
+    row_count: 4892
+    primary_keys: ["data_dt", "pty_id", "sys_source"]
+    business_usage:
+      - "资金流入"
+      - "资金流出"
+      - "盈亏计算资金调整"
+    columns:
+      data_dt: {type: "varchar(8)", name_zh: "日期", description: "资金流水日期"}
+      pty_id: {type: "varchar(32)", name_zh: "客户号", description: "客户唯一标识"}
+      sys_source: {type: "varchar(20)", name_zh: "系统来源", description: "nm普通账户，fc信用账户"}
+      cash_in: {type: "numeric(20,4)", name_zh: "现金转入", description: "入金"}
+      cash_out: {type: "numeric(20,4)", name_zh: "现金转出", description: "出金"}
+      tran_in: {type: "numeric(20,4)", name_zh: "证券转入", description: "证券/托管/转托转入"}
+      tran_out: {type: "numeric(20,4)", name_zh: "证券转出", description: "证券/托管/转托转出"}
+      assign_in: {type: "numeric(20,4)", name_zh: "指定转入", description: "指定交易转入"}
+      assign_out: {type: "numeric(20,4)", name_zh: "撤指定转出", description: "撤指定交易转出"}
+
+  dwd_cust_hold_d:
+    layer: "DWD"
+    name_zh: "客户持有产品日事实"
+    grain: "客户-日期-产品-系统来源-币种"
+    data_date_range: "20260101-20260331"
+    row_count: 408150
+    primary_keys: ["data_dt", "pty_id", "prdt_id", "sys_source", "ccy"]
+    business_usage:
+      - "期末持仓"
+      - "持有产品"
+      - "持有市值"
+      - "产品分类持仓分布"
+    columns:
+      data_dt: {type: "varchar(8)", name_zh: "日期", description: "持仓快照日期"}
+      pty_id: {type: "varchar(32)", name_zh: "客户号", description: "客户唯一标识"}
+      prdt_id: {type: "varchar(12)", name_zh: "产品ID", description: "关联dim_product.prdt_id"}
+      sys_source: {type: "varchar(20)", name_zh: "系统来源", description: "nm普通账户，fc信用账户"}
+      ccy: {type: "varchar(12)", name_zh: "币种", description: "0人民币，1美元，2港币"}
+      hold_cnt: {type: "numeric(20,4)", name_zh: "持有份额", description: "股数或份额"}
+      mkt_val: {type: "numeric(20,4)", name_zh: "持有市值", description: "持仓市值"}
+
+  dwd_cust_tran_d:
+    layer: "DWD"
+    name_zh: "客户交易类买卖日事实"
+    grain: "客户-日期-产品-系统来源-币种"
+    data_date_range: "20260105-20260331"
+    row_count: 39060
+    primary_keys: ["data_dt", "pty_id", "prdt_id", "sys_source", "ccy"]
+    business_usage:
+      - "买入金额"
+      - "卖出金额"
+      - "交易金额"
+      - "交易次数"
+      - "交易活跃客户筛选"
+    columns:
+      data_dt: {type: "varchar(8)", name_zh: "日期", description: "交易日期"}
+      pty_id: {type: "varchar(32)", name_zh: "客户号", description: "客户唯一标识"}
+      prdt_id: {type: "varchar(12)", name_zh: "产品ID", description: "关联dim_product.prdt_id"}
+      sys_source: {type: "varchar(20)", name_zh: "系统来源", description: "nm普通账户，fc信用账户"}
+      ccy: {type: "varchar(12)", name_zh: "币种", description: "0人民币，1美元，2港币"}
+      buy_cnt: {type: "integer", name_zh: "买入次数", description: "买入笔数"}
+      buy_mnt: {type: "numeric(20,4)", name_zh: "买入数量", description: "买入份额或股数"}
+      buy_rake: {type: "numeric(20,4)", name_zh: "买入佣金", description: "买入佣金"}
+      buy_amt: {type: "numeric(20,4)", name_zh: "买入金额", description: "买入成交金额"}
+      buy_fare: {type: "numeric(20,4)", name_zh: "买入费用", description: "买入其他费用"}
+      sell_cnt: {type: "integer", name_zh: "卖出次数", description: "卖出笔数"}
+      sell_mnt: {type: "numeric(20,4)", name_zh: "卖出数量", description: "卖出份额或股数"}
+      sell_rake: {type: "numeric(20,4)", name_zh: "卖出佣金", description: "卖出佣金"}
+      sell_amt: {type: "numeric(20,4)", name_zh: "卖出金额", description: "卖出成交金额"}
+      sell_fare: {type: "numeric(20,4)", name_zh: "卖出费用", description: "卖出其他费用"}
+
+  dim_product:
+    layer: "DIM"
+    name_zh: "产品属性维表"
+    grain: "产品"
+    row_count: 334694
+    primary_keys: ["prdt_id"]
+    business_usage:
+      - "产品名称识别"
+      - "产品代码识别"
+      - "一级/二级产品分类过滤"
+    columns:
+      prdt_id: {type: "varchar(12)", name_zh: "产品ID", description: "产品唯一标识"}
+      prdt_name: {type: "varchar(100)", name_zh: "产品名称", description: "产品名称"}
+      sor_prdt_id: {type: "varchar(12)", name_zh: "产品代码", description: "来源系统产品代码或证券代码"}
+      market_id: {type: "varchar(50)", name_zh: "市场代码", description: "市场/交易所编码"}
+      prdt_type_id: {type: "varchar(12)", name_zh: "产品二级分类ID", description: "产品二级分类编码"}
+      prdt_type_name: {type: "varchar(40)", name_zh: "产品二级分类名称", description: "A股、科创板、ETF等"}
+      up_prdt_type_id: {type: "varchar(12)", name_zh: "产品一级分类ID", description: "产品一级分类编码"}
+      up_prdt_type_name: {type: "varchar(40)", name_zh: "产品一级分类名称", description: "股票、债券、开放式基金等"}
+
+  dim_branch:
+    layer: "DIM"
+    name_zh: "营业部表"
+    grain: "营业部/机构"
+    data_date_range: "20260531"
+    row_count: 312
+    primary_keys: ["data_dt", "org_id"]
+    business_usage:
+      - "营业部分布"
+      - "分公司汇总"
+    columns:
+      data_dt: {type: "varchar(8)", name_zh: "日期", description: "机构快照日期"}
+      org_id: {type: "varchar(50)", name_zh: "营业部ID", description: "客户表org_id关联键"}
+      org_name: {type: "varchar(100)", name_zh: "营业部名称", description: "营业部名称，已脱敏"}
+      up_org_id: {type: "varchar(50)", name_zh: "上级营业部/分公司ID", description: "上级机构ID"}
+      up_org_name: {type: "varchar(100)", name_zh: "上级营业部/分公司名称", description: "上级机构名称"}
+
+  dim_public:
+    layer: "DIM"
+    name_zh: "标准化编码字典表"
+    grain: "字典类型-字典码"
+    row_count: 155
+    primary_keys: ["code_type_id", "code"]
+    business_usage:
+      - "客户等级翻译"
+      - "账户状态翻译"
+      - "性别/学历/职业翻译"
+    columns:
+      code: {type: "varchar(12)", name_zh: "标准字典码", description: "编码值"}
+      code_type_id: {type: "varchar(6)", name_zh: "标准字典码类型", description: "100客户等级，200账户状态，500性别，600学历，700职业等"}
+      describe: {type: "varchar(50)", name_zh: "标准字典描述", description: "编码中文含义；DuckDB中需写作双引号转义：\"describe\""}

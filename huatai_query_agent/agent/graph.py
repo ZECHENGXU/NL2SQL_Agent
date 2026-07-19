@@ -1,0 +1,200 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Callable
+
+from huatai_query_agent.agent.demo_cases import DemoCaseRepository
+from huatai_query_agent.agent.nodes import m1_nodes
+from huatai_query_agent.agent.state import AgentState, new_agent_state
+from huatai_query_agent.executors.duckdb_executor import DuckDBExecutor
+
+try:  # pragma: no cover - optional dependency in the current workspace
+    from langgraph.graph import END, START, StateGraph
+
+    LANGGRAPH_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised when dependency is absent
+    END = "__end__"
+    START = "__start__"
+    StateGraph = None
+    LANGGRAPH_AVAILABLE = False
+
+
+Node = Callable[[AgentState], dict[str, Any]]
+
+
+def _merge(state: AgentState, update: dict[str, Any]) -> AgentState:
+    merged: AgentState = dict(state)  # type: ignore[assignment]
+    merged.update(update)
+    return merged
+
+
+def route_after_slot_check(state: AgentState) -> str:
+    return "ask_clarification" if state.get("missing_slots") else "retrieve_metadata"
+
+
+def route_after_product_resolve(state: AgentState) -> str:
+    product_ambiguity = state.get("ambiguities", {}).get("product")
+    return "ask_clarification" if product_ambiguity else "plan_sql"
+
+
+def route_after_sql_validation(state: AgentState) -> str:
+    report = state.get("validation_report", {})
+    if report.get("passed"):
+        return "execute_sql"
+    if int(state.get("retry_count", 0)) < int(state.get("max_retries", 2)):
+        return "repair_sql"
+    return "human_review_or_explain"
+
+
+def route_after_execution(state: AgentState) -> str:
+    result = state.get("execution_result", {})
+    if result.get("success"):
+        return "validate_result"
+    if int(state.get("retry_count", 0)) < int(state.get("max_retries", 2)):
+        return "repair_sql"
+    return "human_review_or_explain"
+
+
+def route_after_result_validation(state: AgentState) -> str:
+    if state.get("result_check", {}).get("passed") and float(state.get("confidence", 0)) >= 0.5:
+        return "render_answer"
+    return "human_review_or_explain"
+
+
+class QueryAgent:
+    def __init__(
+        self,
+        *,
+        db_path: Path | None = None,
+        repo: DemoCaseRepository | None = None,
+        preview_limit: int = 20,
+        use_langgraph: bool | None = None,
+    ) -> None:
+        self.repo = repo or DemoCaseRepository()
+        self.executor = DuckDBExecutor(db_path) if db_path else DuckDBExecutor()
+        self.preview_limit = preview_limit
+        self.use_langgraph = LANGGRAPH_AVAILABLE if use_langgraph is None else use_langgraph
+        self._compiled_graph = self._compile_graph() if self.use_langgraph and LANGGRAPH_AVAILABLE else None
+
+    def run(
+        self,
+        *,
+        question: str = "",
+        query_id: str | None = None,
+        thread_id: str = "default",
+        max_retries: int = 2,
+    ) -> AgentState:
+        if query_id and not question:
+            question = self.repo.get(query_id).question
+        state = new_agent_state(question=question, thread_id=thread_id, max_retries=max_retries)
+        if query_id:
+            state["matched_query_id"] = query_id
+
+        if self._compiled_graph is not None:
+            config = {"configurable": {"thread_id": thread_id}}
+            return self._compiled_graph.invoke(state, config=config)
+        return self._run_fallback(state)
+
+    def _nodes(self) -> dict[str, Node]:
+        return {
+            "init_run": m1_nodes.init_run,
+            "load_thread_context": m1_nodes.load_thread_context,
+            "normalize_question": m1_nodes.normalize_question,
+            "detect_followup": m1_nodes.detect_followup,
+            "parse_intent": m1_nodes.parse_intent(self.repo),
+            "check_intent_slots": m1_nodes.check_intent_slots,
+            "retrieve_metadata": m1_nodes.retrieve_metadata(self.repo),
+            "resolve_product": m1_nodes.resolve_product,
+            "plan_sql": m1_nodes.plan_sql,
+            "generate_sql": m1_nodes.generate_sql(self.repo),
+            "validate_sql": m1_nodes.validate_sql,
+            "execute_sql": m1_nodes.execute_sql(self.executor, preview_limit=self.preview_limit),
+            "validate_result": m1_nodes.validate_result,
+            "repair_sql": m1_nodes.repair_sql,
+            "ask_clarification": m1_nodes.ask_clarification,
+            "human_review_or_explain": m1_nodes.human_review_or_explain,
+            "render_answer": m1_nodes.render_answer,
+            "persist_state": m1_nodes.persist_state,
+        }
+
+    def _run_fallback(self, state: AgentState) -> AgentState:
+        nodes = self._nodes()
+        for name in (
+            "init_run",
+            "load_thread_context",
+            "normalize_question",
+            "detect_followup",
+            "parse_intent",
+            "check_intent_slots",
+        ):
+            state = _merge(state, nodes[name](state))
+
+        if route_after_slot_check(state) == "ask_clarification":
+            state = _merge(state, nodes["ask_clarification"](state))
+            return _merge(state, nodes["persist_state"](state))
+
+        state = _merge(state, nodes["retrieve_metadata"](state))
+        state = _merge(state, nodes["resolve_product"](state))
+        if route_after_product_resolve(state) == "ask_clarification":
+            state = _merge(state, nodes["ask_clarification"](state))
+            return _merge(state, nodes["persist_state"](state))
+
+        for name in ("plan_sql", "generate_sql"):
+            state = _merge(state, nodes[name](state))
+
+        while True:
+            state = _merge(state, nodes["validate_sql"](state))
+            route = route_after_sql_validation(state)
+            if route == "execute_sql":
+                break
+            if route == "repair_sql":
+                state = _merge(state, nodes["repair_sql"](state))
+                continue
+            state = _merge(state, nodes["human_review_or_explain"](state))
+            return _merge(state, nodes["persist_state"](state))
+
+        while True:
+            state = _merge(state, nodes["execute_sql"](state))
+            route = route_after_execution(state)
+            if route == "validate_result":
+                break
+            if route == "repair_sql":
+                state = _merge(state, nodes["repair_sql"](state))
+                continue
+            state = _merge(state, nodes["human_review_or_explain"](state))
+            return _merge(state, nodes["persist_state"](state))
+
+        state = _merge(state, nodes["validate_result"](state))
+        if route_after_result_validation(state) == "render_answer":
+            state = _merge(state, nodes["render_answer"](state))
+        else:
+            state = _merge(state, nodes["human_review_or_explain"](state))
+        return _merge(state, nodes["persist_state"](state))
+
+    def _compile_graph(self) -> Any:
+        graph = StateGraph(AgentState)
+        nodes = self._nodes()
+        for name, node in nodes.items():
+            graph.add_node(name, node)
+
+        graph.add_edge(START, "init_run")
+        graph.add_edge("init_run", "load_thread_context")
+        graph.add_edge("load_thread_context", "normalize_question")
+        graph.add_edge("normalize_question", "detect_followup")
+        graph.add_edge("detect_followup", "parse_intent")
+        graph.add_edge("parse_intent", "check_intent_slots")
+        graph.add_conditional_edges("check_intent_slots", route_after_slot_check)
+        graph.add_edge("retrieve_metadata", "resolve_product")
+        graph.add_conditional_edges("resolve_product", route_after_product_resolve)
+        graph.add_edge("plan_sql", "generate_sql")
+        graph.add_edge("generate_sql", "validate_sql")
+        graph.add_conditional_edges("validate_sql", route_after_sql_validation)
+        graph.add_edge("repair_sql", "validate_sql")
+        graph.add_conditional_edges("execute_sql", route_after_execution)
+        graph.add_conditional_edges("validate_result", route_after_result_validation)
+        graph.add_edge("ask_clarification", "persist_state")
+        graph.add_edge("human_review_or_explain", "persist_state")
+        graph.add_edge("render_answer", "persist_state")
+        graph.add_edge("persist_state", END)
+        return graph.compile()
+

@@ -1,0 +1,107 @@
+version: "1.0"
+updated_at: "2026-07-19"
+description: "表间关联关系与标准JOIN模板"
+
+relationships:
+  - name: "customer_to_asset"
+    left_table: "ads_cust_info_d"
+    right_table: "dws_cust_aset_d"
+    join_type: "left"
+    keys:
+      - left: "pty_id"
+        right: "pty_id"
+    date_rule: "资产表需指定data_dt，例如Q1期末为20260331"
+    template: "left join dws_cust_aset_d aset on cust.pty_id = aset.pty_id and aset.data_dt = '{asset_date}'"
+
+  - name: "customer_to_fin"
+    left_table: "ads_cust_info_d"
+    right_table: "dws_cust_fin_d"
+    join_type: "left"
+    keys:
+      - left: "pty_id"
+        right: "pty_id"
+    date_rule: "资金表通常使用区间过滤"
+    template: "left join dws_cust_fin_d fin on cust.pty_id = fin.pty_id and fin.data_dt between '{start_date}' and '{end_date}'"
+
+  - name: "customer_to_hold"
+    left_table: "ads_cust_info_d"
+    right_table: "dwd_cust_hold_d"
+    join_type: "inner_or_left"
+    keys:
+      - left: "pty_id"
+        right: "pty_id"
+    date_rule: "持仓表通常使用期末快照，例如20260331"
+    template: "join dwd_cust_hold_d hold on cust.pty_id = hold.pty_id and hold.data_dt = '{hold_date}'"
+
+  - name: "customer_to_transaction"
+    left_table: "ads_cust_info_d"
+    right_table: "dwd_cust_tran_d"
+    join_type: "inner_or_left"
+    keys:
+      - left: "pty_id"
+        right: "pty_id"
+    date_rule: "交易表通常使用区间过滤"
+    template: "join dwd_cust_tran_d tran on cust.pty_id = tran.pty_id and tran.data_dt between '{start_date}' and '{end_date}'"
+
+  - name: "hold_to_product"
+    left_table: "dwd_cust_hold_d"
+    right_table: "dim_product"
+    join_type: "inner"
+    keys:
+      - left: "prdt_id"
+        right: "prdt_id"
+    template: "inner join dim_product prdt on hold.prdt_id = prdt.prdt_id"
+
+  - name: "transaction_to_product"
+    left_table: "dwd_cust_tran_d"
+    right_table: "dim_product"
+    join_type: "inner"
+    keys:
+      - left: "prdt_id"
+        right: "prdt_id"
+    template: "inner join dim_product prdt on tran.prdt_id = prdt.prdt_id"
+
+  - name: "customer_to_branch"
+    left_table: "ads_cust_info_d"
+    right_table: "dim_branch"
+    join_type: "left"
+    keys:
+      - left: "org_id"
+        right: "org_id"
+    date_rule: "营业部表当前快照为20260531，可按需指定"
+    template: "left join dim_branch branch on cust.org_id = branch.org_id"
+
+dictionary_joins:
+  customer_level:
+    source_table: "ads_cust_info_d"
+    source_field: "cust_lvl_cd"
+    dictionary_type: "100"
+    template: "left join dim_public lvl on cust.cust_lvl_cd = lvl.code and lvl.code_type_id = '100'"
+  account_status:
+    source_table: "ads_cust_info_d"
+    source_field: "cust_status"
+    dictionary_type: "200"
+    template: "left join dim_public status on cust.cust_status = status.code and status.code_type_id = '200'"
+  gender:
+    source_table: "ads_cust_info_d"
+    source_field: "gender_cd"
+    dictionary_type: "500"
+    template: "left join dim_public gender on cust.gender_cd = gender.code and gender.code_type_id = '500'"
+  education:
+    source_table: "ads_cust_info_d"
+    source_field: "edu_cd"
+    dictionary_type: "600"
+    template: "left join dim_public edu on cust.edu_cd = edu.code and edu.code_type_id = '600'"
+  profession:
+    source_table: "ads_cust_info_d"
+    source_field: "prof_cd"
+    dictionary_type: "700"
+    template: "left join dim_public prof on cust.prof_cd = prof.code and prof.code_type_id = '700'"
+
+generation_rules:
+  - "客户画像筛选默认使用 ads_cust_info_d.data_dt = '20260531'"
+  - "Q1交易、资金、资产查询默认时间范围为20260101-20260331"
+  - "期末持仓默认使用 dwd_cust_hold_d.data_dt = '20260331'"
+  - "金额类字段必须使用coalesce防止NULL传播"
+  - "交易/持仓相关产品筛选必须关联dim_product"
+  - "DuckDB中dim_public的describe字段需写为\"describe\"；优先直接使用编码字段过滤，减少关键字转义问题"
