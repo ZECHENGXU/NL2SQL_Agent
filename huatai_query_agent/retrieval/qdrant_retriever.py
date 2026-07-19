@@ -104,3 +104,5 @@ class QdrantMetadataStore:
             )
         return results
 
+    def close(self) -> None:
+        self.client.close()

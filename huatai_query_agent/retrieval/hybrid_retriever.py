@@ -113,6 +113,9 @@ class HybridMetadataRetriever:
                 merged[result.chunk.id] = result
         return list(merged.values())
 
+    def close(self) -> None:
+        self.qdrant.close()
+
 
 def _dedupe(values: list[object]) -> list[object]:
     seen = set()
@@ -125,4 +128,3 @@ def _dedupe(values: list[object]) -> list[object]:
             seen.add(key)
             output.append(value)
     return output
-
