@@ -11,6 +11,7 @@ from huatai_query_agent.llm.client import Message
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 METADATA_DIR = PACKAGE_DIR / "metadata"
+PROMPT_VERSION = "2026-07-31-contract-v3"
 
 
 SYSTEM_PROMPT = """你是华泰证券客户营销场景的 Text-to-SQL Agent。
@@ -23,10 +24,14 @@ SYSTEM_PROMPT = """你是华泰证券客户营销场景的 Text-to-SQL Agent。
 4. 日期字段为 varchar(8)，使用 'yyyymmdd' 字符串比较。
 5. 金额类计算必须使用 coalesce，避免 NULL 传播。
 6. 产品名称、产品分类筛选必须关联 dim_product。
-7. 客户画像默认使用 ads_cust_info_d.data_dt = '20260531'。
+7. 客户画像 ads_cust_info_d 和机构 dim_branch 当前快照固定为 '20260531'；不得把事实表日期传播给这两张表。
 8. 2026年Q1默认日期范围是 '20260101' 到 '20260331'，Q1期末为 '20260331'。
-9. 如果信息不足，应返回 missing_slots 或 assumptions，不要猜测。
-10. 结果解释只能基于 execution_result 中的列、行数和预览行。
+9. 不得添加用户、业务规则和 SQL 计划均未要求的币种、账户来源、产品或地域过滤。
+10. 区分“整条事实记录缺失”和“已存在记录的字段为NULL”。只有计划明确要求缺失事实按0时，才允许在连接后补0；双快照比较默认要求两期记录都存在。
+11. 客户等级、性别、学历和币种等面向业务用户的维度默认输出中文描述，不输出原始编码，除非用户明确要求编码。
+12. 只有会改变查询目标、关键实体、时间范围或核心口径且无法从元数据默认规则得到的信息，才是 blocking_missing_slots；其他不确定性写入 assumptions 后继续。
+13. SQL 最外层 SELECT 必须严格覆盖 sql_plan.output_columns，使用指定顺序和 alias，不得漏列或擅自增加列。
+14. 结果解释只能基于 execution_result 中的列、行数和预览行。
 """
 
 
@@ -42,9 +47,17 @@ INTENT_PROMPT = SYSTEM_PROMPT + """
     "metrics": ["指标或统计口径"],
     "time_range": {"start_date": "", "end_date": "", "point_date": ""},
     "products": ["产品或产品分类"],
-    "customer_scope": ["客户范围条件"]
+    "customer_scope": ["客户范围条件"],
+    "requested_outputs": [
+      {"name": "语义字段名", "alias": "稳定snake_case别名", "required": true}
+    ],
+    "population": "统计母集",
+    "grain": ["最终结果粒度"],
+    "missing_fact_policy": {},
+    "snapshot_policy": {}
   },
-  "missing_slots": ["缺失但必须向用户确认的信息"],
+  "blocking_missing_slots": ["确实阻断SQL且无法采用默认值的信息"],
+  "non_blocking_uncertainties": ["不阻断SQL的不确定项"],
   "ambiguities": {"字段或术语": ["候选解释"]},
   "assumptions": ["按赛题规则可默认的假设"],
   "confidence": 0.0
@@ -64,12 +77,20 @@ SLOT_FILL_PROMPT = SYSTEM_PROMPT + """
     "metrics": ["标准指标名"],
     "time_range": {"start_date": "", "end_date": "", "point_date": ""},
     "products": ["标准产品条件"],
-    "customer_scope": ["标准客户条件"]
+    "customer_scope": ["标准客户条件"],
+    "requested_outputs": [
+      {"name": "语义字段名", "alias": "稳定snake_case别名", "required": true}
+    ],
+    "population": "统计母集",
+    "grain": ["最终结果粒度"],
+    "missing_fact_policy": {},
+    "snapshot_policy": {}
   },
   "resolved_terms": [
     {"term": "原始术语", "resolved_to": "标准解释", "field": "表.字段", "value": "编码或条件", "context_id": "元数据chunk id"}
   ],
-  "missing_slots": ["仍然缺失且不能默认的信息"],
+  "blocking_missing_slots": ["仍然缺失、影响核心口径且不能默认的信息"],
+  "non_blocking_uncertainties": ["可采用假设继续的不确定项"],
   "ambiguities": {"字段或术语": ["候选解释"]},
   "assumptions": ["按元数据和赛题规则采用的默认假设"],
   "confidence": 0.0
@@ -88,8 +109,36 @@ SQL_PLAN_PROMPT = SYSTEM_PROMPT + """
     "joins": ["关联说明"],
     "filters": ["筛选条件"],
     "metrics": ["指标"],
+    "population": "统计母集及其来源",
+    "grain": ["最终结果粒度"],
+    "output_columns": [
+      {
+        "expression": "SQL表达式或语义来源",
+        "alias": "稳定snake_case别名",
+        "semantic_type": "语义类型",
+        "required": true,
+        "position": 1
+      }
+    ],
     "group_by": ["分组字段"],
-    "order_by": ["排序规则"]
+    "eligibility_filters": ["进入排名或统计前必须满足的资格条件"],
+    "snapshot_policy": {"表名": "日期或日期范围"},
+    "missing_fact_policy": {"事实名称": "require_record或zero_fill_after_aggregation"},
+    "missing_period_policy": "exclude或zero_fill",
+    "dictionary_translation": ["需要翻译为中文的字段"],
+    "window": [
+      {
+        "function": "row_number|dense_rank|lag|ntile|percent_rank",
+        "partition_by": ["分区键"],
+        "order_by": [{"expression": "字段", "direction": "asc|desc"}],
+        "tie_breaker": ["并列打散字段"]
+      }
+    ],
+    "order_by": [
+      {"expression": "字段", "direction": "asc|desc", "nulls": "first|last"}
+    ],
+    "top_n": null,
+    "expect_nonempty": false
   },
   "confidence": 0.0,
   "assumptions": ["必要假设"],
@@ -100,6 +149,10 @@ SQL_PLAN_PROMPT = SYSTEM_PROMPT + """
 
 SQL_GENERATION_PROMPT = SYSTEM_PROMPT + """
 当前任务：严格按照给定 SQL 计划生成一条可在 DuckDB 执行的 SQL。
+
+生成前逐项核对 output_columns、population、grain、eligibility_filters、snapshot_policy、
+missing_fact_policy、window 和 order_by。最外层 SELECT 的列数量、顺序和 alias 必须与
+output_columns 完全一致。不要把字段 NULL 的 coalesce 规则扩大成缺失事实记录补0。
 
 返回 JSON 格式：
 {
@@ -199,6 +252,7 @@ def build_sql_repair_messages(
     previous_sql: str,
     validation_report: dict[str, Any],
     execution_result: dict[str, Any],
+    result_check: dict[str, Any] | None = None,
 ) -> list[Message]:
     payload = build_prompt_payload(question, metadata_context)
     payload["intent"] = intent
@@ -206,6 +260,7 @@ def build_sql_repair_messages(
     payload["previous_sql"] = previous_sql
     payload["validation_report"] = validation_report
     payload["execution_error"] = execution_result.get("error", "")
+    payload["result_check"] = result_check or {}
     return [
         {"role": "system", "content": SQL_GENERATION_PROMPT},
         {
@@ -254,6 +309,7 @@ def build_prompt_payload(question: str, metadata_context: dict[str, Any]) -> dic
 
     return {
         "question": question,
+        "request_context": metadata_context.get("request_context", {}),
         "retrieval_mode": metadata_context.get("retrieval_mode"),
         "context_ids": metadata_context.get("context_ids", []),
         "retrieved_chunks": _compact_chunks(metadata_context.get("chunks", [])),
@@ -307,6 +363,7 @@ def _load_table_schemas(table_names: list[str]) -> list[dict[str, Any]]:
                 "table_name": table_name,
                 "name_zh": table.get("name_zh"),
                 "grain": table.get("grain"),
+                "data_date_range": table.get("data_date_range"),
                 "primary_keys": table.get("primary_keys", []),
                 "columns": [
                     {

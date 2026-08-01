@@ -8,6 +8,6 @@
 - `business_terms.yaml`：业务术语、同义词、编码值映射，用于用户问题解析。
 - `metrics.yaml`：指标口径、SQL表达式、涉及表，用于 SQL 生成和指标合法性校验。
 - `relationships.yaml`：表间关联关系和标准 JOIN 模板，用于多表查询生成。
-- `query_examples.yaml`：7条样例问题的结构化拆解，用于样例召回、评测集种子和演示入口。
+- `query_examples.yaml`：7条样例问题的结构化拆解，仅用于评测集种子和演示入口，不参与元数据检索。
 
 后续开发中，Agent 不应直接依赖散落的 Markdown 描述，而应优先读取本目录中的结构化元数据。

@@ -14,10 +14,14 @@ class AgentState(TypedDict, total=False):
     thread_summary: dict[str, Any]
     intent: dict[str, Any]
     missing_slots: list[str]
+    blocking_missing_slots: list[str]
+    non_blocking_uncertainties: list[str]
+    assumptions: list[str]
     ambiguities: dict[str, Any]
     metadata_context: dict[str, Any]
     context_ids: list[str]
     sql_plan: dict[str, Any]
+    followup_patch: dict[str, Any]
     candidate_sql: str
     matched_query_id: str
     matched_score: float
@@ -34,6 +38,7 @@ class AgentState(TypedDict, total=False):
     sql_mode: str
     llm_generation: dict[str, Any]
     llm_repair: dict[str, Any]
+    sql_generation_attempts: list[dict[str, Any]]
     llm_error: str
     slot_report: dict[str, Any]
     result_explanation: dict[str, Any]
@@ -41,6 +46,10 @@ class AgentState(TypedDict, total=False):
     llm_slot_fill: dict[str, Any]
     llm_plan: dict[str, Any]
     llm_result_explanation: dict[str, Any]
+    continue_with_assumptions: bool
+    request_context: dict[str, Any]
+    case_timeout_seconds: float
+    case_timed_out: bool
 
 
 def new_agent_state(
@@ -49,6 +58,9 @@ def new_agent_state(
     query_id: str | None = None,
     thread_id: str | None = None,
     max_retries: int = 2,
+    continue_with_assumptions: bool = False,
+    request_context: dict[str, Any] | None = None,
+    case_timeout_seconds: float | None = None,
 ) -> AgentState:
     return AgentState(
         thread_id=thread_id or "default",
@@ -59,8 +71,16 @@ def new_agent_state(
         trace=[],
         audit_record={},
         missing_slots=[],
+        blocking_missing_slots=[],
+        non_blocking_uncertainties=[],
+        assumptions=[],
+        sql_generation_attempts=[],
         ambiguities={},
         confidence=0.0,
+        continue_with_assumptions=continue_with_assumptions,
+        request_context=dict(request_context or {}),
+        case_timeout_seconds=float(case_timeout_seconds or 0.0),
+        case_timed_out=False,
     )
 
 

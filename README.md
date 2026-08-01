@@ -25,7 +25,8 @@
 - 元数据检索使用结构化 YAML + Qdrant Local。
 - LLM 输出强制 JSON，节点输出可追踪。
 - SQL 执行前使用 `sqlglot` 做 AST 校验。
-- 已实现只读校验、危险 SQL 拦截、多语句拦截、表白名单、字段白名单。
+- 已实现只读校验、危险 SQL 拦截、多语句拦截、表白名单、字段白名单、指标公式校验。
+- 支持 thread 级短期记忆，可演示一次条件追问；模糊产品名会进入澄清路径。
 - 自动化评测可输出 Markdown / CSV 报告。
 - 本地 Web 页面可展示结果、SQL、Trace、围栏、元数据和评测报告。
 
@@ -90,6 +91,14 @@ HUATAI_LLM_API_KEY=sk-your-key
 
 注意：如果使用云端 LLM，问题、元数据上下文、SQL plan 和结果摘要可能发送到模型服务商。正式金融数据环境建议切换到本地模型网关。
 
+本地模型网关检查：
+
+```powershell
+E:\anaconda\envs\huatai-agent\python.exe huatai_query_agent\llm\check_connection.py --require-local --expected-model deepseek-v4-rpo
+```
+
+Embedding 默认使用确定性 `HashingEmbedding` 兜底；如已部署 bge-m3/OpenAI-compatible embedding 服务，可在 `.env` 中配置 `HUATAI_EMBEDDING_PROVIDER=local_openai_compatible`、`HUATAI_EMBEDDING_BASE_URL` 和 `HUATAI_EMBEDDING_MODEL=BAAI/bge-m3` 后重建索引。
+
 ## 初始化数据和索引
 
 通常仓库中已完成数据导入和索引构建。如需重建：
@@ -136,6 +145,12 @@ E:\anaconda\envs\huatai-agent\python.exe -m huatai_query_agent.agent.run_agent -
 E:\anaconda\envs\huatai-agent\python.exe huatai_query_agent\evaluation\run_agent_eval.py --sql-mode demo --preview 2 --strict-result-match
 ```
 
+扩展变体评测集：
+
+```powershell
+E:\anaconda\envs\huatai-agent\python.exe huatai_query_agent\evaluation\run_agent_eval.py --sql-mode demo --case-set all --preview 2 --strict-result-match
+```
+
 预期：
 
 ```text
@@ -153,7 +168,7 @@ E:\anaconda\envs\huatai-agent\python.exe huatai_query_agent\evaluation\run_guard
 预期：
 
 ```text
-guardrail_expectation_match_rate=8/8 (100.00%)
+guardrail_expectation_match_rate=10/10 (100.00%)
 ```
 
 ## 启动 Web 演示
@@ -196,5 +211,4 @@ fc9b80a document huatai agent environment
 
 - 整理 PPT 架构图和状态图；
 - 固化演示顺序；
-- 增加指标公式级强校验；
-- 如有本地模型网关，跑完整 LLM 评测并归档报告。
+- 如有本地模型网关，运行 `llm` 模式扩展评测并归档报告。

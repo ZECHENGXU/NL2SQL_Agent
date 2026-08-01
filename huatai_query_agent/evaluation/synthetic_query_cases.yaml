@@ -1,0 +1,774 @@
+version: "1.0"
+description: "基于原始 CSV、表描述和业务术语生成的 SQL 标准答案型扩展测试集，用于评测非官方样例问题的 Text-to-SQL 泛化能力。"
+
+cases:
+  - id: "s001"
+    category: "customer_profile"
+    scenario: "客户画像"
+    difficulty: "simple"
+    question: "统计白金卡女性客户中，年龄在30到50岁之间的人数，并按学历分组。"
+    required_tables: ["ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count"]
+    sql: |
+      select
+          coalesce(edu."describe", cust.edu_cd) as education,
+          count(*) as customer_count
+      from ads_cust_info_d cust
+      left join dim_public edu
+        on edu.code_type_id = '600'
+       and cust.edu_cd = edu.code
+      where cust.data_dt = '20260531'
+        and cust.cust_lvl_cd = '1000002'
+        and cust.gender_cd = '5000003'
+        and cust.cust_age between 30 and 50
+      group by education
+      order by customer_count desc, education
+
+  - id: "s002"
+    category: "customer_profile"
+    scenario: "客户画像"
+    difficulty: "simple"
+    question: "正常状态客户按客户等级和性别分别有多少人？"
+    required_tables: ["ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count"]
+    sql: |
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          coalesce(gender_dict."describe", cust.gender_cd) as gender_name,
+          count(*) as customer_count
+      from ads_cust_info_d cust
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      left join dim_public gender_dict
+        on gender_dict.code_type_id = '500'
+       and cust.gender_cd = gender_dict.code
+      where cust.data_dt = '20260531'
+        and cust.cust_status = '2000001'
+      group by customer_level, gender_name
+      order by customer_count desc, customer_level, gender_name
+
+  - id: "s003"
+    category: "asset_analysis"
+    scenario: "资产分析"
+    difficulty: "medium"
+    question: "2026年3月31日各省客户总资产最高的前10名省份是哪几个？"
+    required_tables: ["ads_cust_info_d", "dws_cust_aset_d"]
+    expected_metrics: ["customer_count", "total_asset", "avg_asset"]
+    sql: |
+      select
+          cust.prov_name,
+          count(distinct cust.pty_id) as customer_count,
+          sum(coalesce(aset.nm_tot_aset, 0) + coalesce(aset.fc_pur_aset, 0)) as total_asset,
+          avg(coalesce(aset.nm_tot_aset, 0) + coalesce(aset.fc_pur_aset, 0)) as avg_asset
+      from ads_cust_info_d cust
+      inner join dws_cust_aset_d aset
+        on cust.pty_id = aset.pty_id
+       and aset.data_dt = '20260331'
+      where cust.data_dt = '20260531'
+      group by cust.prov_name
+      order by total_asset desc
+      limit 10
+
+  - id: "s004"
+    category: "asset_analysis"
+    scenario: "资产分析"
+    difficulty: "medium"
+    question: "按2026年3月31日期末总资产分层统计客户数和资产总额，分层为10万以下、10到30万、30到100万、100万以上。"
+    required_tables: ["dws_cust_aset_d"]
+    expected_metrics: ["customer_count", "total_asset"]
+    output_contract:
+      accepted_alternatives: ["等价的中文资产分层标签"]
+      column_overrides:
+        asset_band:
+          value_aliases:
+            "10万以下": "<10万"
+            "10-30万": "[10万,30万)"
+            "30-100万": "[30万,100万)"
+            "100万以上": ">=100万"
+    sql: |
+      with asset_snapshot as (
+          select
+              pty_id,
+              coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          case
+              when total_asset < 100000 then '<10万'
+              when total_asset >= 100000 and total_asset < 300000 then '[10万,30万)'
+              when total_asset >= 300000 and total_asset < 1000000 then '[30万,100万)'
+              else '>=100万'
+          end as asset_band,
+          count(*) as customer_count,
+          sum(total_asset) as total_asset
+      from asset_snapshot
+      group by asset_band
+      order by
+          case asset_band
+              when '<10万' then 1
+              when '[10万,30万)' then 2
+              when '[30万,100万)' then 3
+              else 4
+          end
+
+  - id: "s005"
+    category: "asset_analysis"
+    scenario: "资产增长"
+    difficulty: "medium"
+    question: "找出2026年一季度末总资产比期初增长超过10万元的客户，按增长额倒序列出前20名。"
+    required_tables: ["dws_cust_aset_d"]
+    expected_metrics: ["begin_total_asset", "end_total_asset", "asset_growth"]
+    sql: |
+      with begin_asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as begin_total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260101'
+      ),
+      end_asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as end_total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          e.pty_id,
+          b.begin_total_asset,
+          e.end_total_asset,
+          e.end_total_asset - b.begin_total_asset as asset_growth
+      from end_asset e
+      inner join begin_asset b on e.pty_id = b.pty_id
+      where e.end_total_asset - b.begin_total_asset > 100000
+      order by asset_growth desc
+      limit 20
+
+  - id: "s006"
+    category: "fund_flow"
+    scenario: "资金流动"
+    difficulty: "simple"
+    question: "分别统计2026年一季度普通账户和信用账户的总流入、总流出和净流入。"
+    required_tables: ["dws_cust_fin_d"]
+    expected_metrics: ["total_inflow", "total_outflow", "net_inflow"]
+    sql: |
+      select
+          sys_source,
+          sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)) as total_inflow,
+          sum(coalesce(cash_out, 0) + coalesce(tran_out, 0) + coalesce(assign_out, 0)) as total_outflow,
+          sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+            - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+      from dws_cust_fin_d
+      where data_dt between '20260101' and '20260331'
+      group by sys_source
+      order by net_inflow desc
+
+  - id: "s007"
+    category: "fund_flow"
+    scenario: "资金流动"
+    difficulty: "medium"
+    question: "2026年一季度净流入超过5万元的客户，按客户等级统计人数和净流入总额。"
+    required_tables: ["dws_cust_fin_d", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count", "total_net_inflow"]
+    sql: |
+      with flow_by_customer as (
+          select
+              pty_id,
+              sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+          having sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+            - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) > 50000
+      )
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          count(*) as customer_count,
+          sum(flow.net_inflow) as total_net_inflow
+      from flow_by_customer flow
+      inner join ads_cust_info_d cust
+        on flow.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      group by customer_level
+      order by total_net_inflow desc
+
+  - id: "s008"
+    category: "transaction_analysis"
+    scenario: "交易分析"
+    difficulty: "medium"
+    question: "2026年一季度A股买入金额最高的前10只产品是什么？同时给出交易客户数和卖出金额。"
+    required_tables: ["dwd_cust_tran_d", "dim_product"]
+    expected_metrics: ["customer_count", "total_buy_amount", "total_sell_amount"]
+    sql: |
+      select
+          prdt.prdt_name,
+          count(distinct tran.pty_id) as customer_count,
+          sum(coalesce(tran.buy_amt, 0)) as total_buy_amount,
+          sum(coalesce(tran.sell_amt, 0)) as total_sell_amount
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      where tran.data_dt between '20260101' and '20260331'
+        and prdt.prdt_type_name = 'A股'
+      group by prdt.prdt_name
+      having sum(coalesce(tran.buy_amt, 0)) > 0
+      order by total_buy_amount desc
+      limit 10
+
+  - id: "s009"
+    category: "transaction_analysis"
+    scenario: "交易分析"
+    difficulty: "medium"
+    question: "找出2026年一季度创业板卖出金额大于买入金额的客户，按差额倒序列出前20名。"
+    required_tables: ["dwd_cust_tran_d", "dim_product"]
+    expected_metrics: ["total_sell_amount", "total_buy_amount", "sell_buy_gap"]
+    sql: |
+      select
+          tran.pty_id,
+          sum(coalesce(tran.sell_amt, 0)) as total_sell_amount,
+          sum(coalesce(tran.buy_amt, 0)) as total_buy_amount,
+          sum(coalesce(tran.sell_amt, 0) - coalesce(tran.buy_amt, 0)) as sell_buy_gap
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      where tran.data_dt between '20260101' and '20260331'
+        and prdt.prdt_type_name = '创业板'
+      group by tran.pty_id
+      having sum(coalesce(tran.sell_amt, 0)) > sum(coalesce(tran.buy_amt, 0))
+      order by sell_buy_gap desc
+      limit 20
+
+  - id: "s010"
+    category: "transaction_analysis"
+    scenario: "交易分析"
+    difficulty: "medium"
+    question: "统计2026年一季度股票交易金额按一级和二级产品类型的分布。"
+    required_tables: ["dwd_cust_tran_d", "dim_product"]
+    expected_metrics: ["customer_count", "transaction_amount"]
+    sql: |
+      select
+          prdt.up_prdt_type_name,
+          prdt.prdt_type_name,
+          count(distinct tran.pty_id) as customer_count,
+          sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as transaction_amount
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      where tran.data_dt between '20260101' and '20260331'
+        and prdt.up_prdt_type_name = '股票'
+      group by prdt.up_prdt_type_name, prdt.prdt_type_name
+      order by transaction_amount desc
+
+  - id: "s011"
+    category: "branch_transaction"
+    scenario: "营业部交易分析"
+    difficulty: "complex"
+    question: "2026年一季度A股交易金额最高的前10个营业部是哪几个？"
+    required_tables: ["dwd_cust_tran_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["customer_count", "stock_transaction_amount"]
+    sql: |
+      select
+          branch.up_org_name,
+          branch.org_name,
+          count(distinct tran.pty_id) as customer_count,
+          sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as stock_transaction_amount
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      inner join ads_cust_info_d cust
+        on tran.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+      where tran.data_dt between '20260101' and '20260331'
+        and prdt.prdt_type_name = 'A股'
+      group by branch.up_org_name, branch.org_name
+      order by stock_transaction_amount desc
+      limit 10
+
+  - id: "s012"
+    category: "cross_product_filter"
+    scenario: "交易交叉筛选"
+    difficulty: "complex"
+    question: "2026年一季度同时交易过利欧股份A股和特变电工A股的客户有多少人？"
+    required_tables: ["dwd_cust_tran_d", "dim_product"]
+    expected_metrics: ["customer_count"]
+    sql: |
+      with leo as (
+          select distinct tran.pty_id
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.prdt_name = '利欧股份'
+            and prdt.prdt_type_name = 'A股'
+            and coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0) > 0
+      ),
+      tbea as (
+          select distinct tran.pty_id
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.prdt_name = '特变电工'
+            and prdt.prdt_type_name = 'A股'
+            and coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0) > 0
+      )
+      select count(*) as customer_count
+      from leo
+      inner join tbea on leo.pty_id = tbea.pty_id
+
+  - id: "s013"
+    category: "holding_analysis"
+    scenario: "持仓分析"
+    difficulty: "simple"
+    question: "2026年3月31日期末持仓按账户来源和币种统计客户数和市值。"
+    required_tables: ["dwd_cust_hold_d"]
+    expected_metrics: ["customer_count", "total_market_value"]
+    sql: |
+      select
+          sys_source,
+          case ccy
+              when '0' then '人民币'
+              when '1' then '美元'
+              when '2' then '港币'
+              else ccy
+          end as currency_name,
+          count(distinct pty_id) as customer_count,
+          sum(coalesce(mkt_val, 0)) as total_market_value
+      from dwd_cust_hold_d
+      where data_dt = '20260331'
+      group by sys_source, currency_name
+      order by total_market_value desc
+
+  - id: "s014"
+    category: "holding_analysis"
+    scenario: "持仓分析"
+    difficulty: "medium"
+    question: "2026年3月31日A股持仓市值最高的前10只股票是什么？"
+    required_tables: ["dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["customer_count", "total_market_value"]
+    sql: |
+      select
+          prdt.prdt_name,
+          count(distinct hold.pty_id) as customer_count,
+          sum(coalesce(hold.mkt_val, 0)) as total_market_value
+      from dwd_cust_hold_d hold
+      inner join dim_product prdt
+        on hold.prdt_id = prdt.prdt_id
+      where hold.data_dt = '20260331'
+        and prdt.prdt_type_name = 'A股'
+      group by prdt.prdt_name
+      having sum(coalesce(hold.mkt_val, 0)) > 0
+      order by total_market_value desc
+      limit 10
+
+  - id: "s015"
+    category: "cross_product_filter"
+    scenario: "持仓交叉筛选"
+    difficulty: "complex"
+    question: "2026年3月31日同时持有华泰紫金天天发货币市场基金和南方天天利货币市场基金的客户有多少人？"
+    required_tables: ["dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["customer_count"]
+    sql: |
+      with fund_a as (
+          select distinct hold.pty_id
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.prdt_name = '华泰紫金天天发货币市场基金'
+            and coalesce(hold.mkt_val, 0) > 0
+      ),
+      fund_b as (
+          select distinct hold.pty_id
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.prdt_name = '南方天天利货币市场基金'
+            and coalesce(hold.mkt_val, 0) > 0
+      )
+      select count(*) as customer_count
+      from fund_a
+      inner join fund_b on fund_a.pty_id = fund_b.pty_id
+
+  - id: "s016"
+    category: "branch_holding"
+    scenario: "营业部持仓分析"
+    difficulty: "complex"
+    question: "2026年3月31日持有张家港行A股市值超过1万元的客户按分公司和营业部怎么分布？"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["customer_count", "total_market_value"]
+    sql: |
+      select
+          branch.up_org_name,
+          branch.org_name,
+          count(distinct hold.pty_id) as customer_count,
+          sum(coalesce(hold.mkt_val, 0)) as total_market_value
+      from dwd_cust_hold_d hold
+      inner join dim_product prdt
+        on hold.prdt_id = prdt.prdt_id
+      inner join ads_cust_info_d cust
+        on hold.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+      where hold.data_dt = '20260331'
+        and prdt.prdt_name = '张家港行'
+        and prdt.prdt_type_name = 'A股'
+        and coalesce(hold.mkt_val, 0) > 10000
+      group by branch.up_org_name, branch.org_name
+      order by total_market_value desc
+
+  - id: "s017"
+    category: "asset_analysis"
+    scenario: "现金资产分析"
+    difficulty: "medium"
+    question: "2026年3月31日普通账户现金余额大于信用账户现金余额的客户，按等级统计人数和平均现金差额。"
+    required_tables: ["dws_cust_aset_d", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count", "avg_cash_balance_gap"]
+    sql: |
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          count(*) as customer_count,
+          avg(aset.nm_bal - aset.fc_bal) as avg_cash_balance_gap
+      from dws_cust_aset_d aset
+      inner join ads_cust_info_d cust
+        on aset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      where aset.data_dt = '20260331'
+        and aset.nm_bal > aset.fc_bal
+      group by customer_level
+      order by customer_count desc
+
+  - id: "s018"
+    category: "asset_analysis"
+    scenario: "日均资产分析"
+    difficulty: "medium"
+    question: "2026年一季度各客户等级的日均总资产是多少？"
+    required_tables: ["dws_cust_aset_d", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count", "avg_daily_total_asset"]
+    sql: |
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          count(distinct aset.pty_id) as customer_count,
+          sum(coalesce(aset.nm_tot_aset, 0) + coalesce(aset.fc_pur_aset, 0)) / 90.0 as avg_daily_total_asset
+      from dws_cust_aset_d aset
+      inner join ads_cust_info_d cust
+        on aset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      where aset.data_dt between '20260101' and '20260331'
+      group by customer_level
+      order by avg_daily_total_asset desc
+
+  - id: "s019"
+    category: "customer_filter"
+    scenario: "客户筛选"
+    difficulty: "complex"
+    question: "2026年一季度日均总资产超过30万元但没有任何交易金额的客户有多少人？"
+    required_tables: ["dws_cust_aset_d", "dwd_cust_tran_d"]
+    expected_metrics: ["customer_count"]
+    sql: |
+      with avg_asset as (
+          select
+              pty_id,
+              sum(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) / 90.0 as avg_daily_asset
+          from dws_cust_aset_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select count(*) as customer_count
+      from avg_asset asset
+      where asset.avg_daily_asset > 300000
+        and not exists (
+            select 1
+            from dwd_cust_tran_d tran
+            where tran.pty_id = asset.pty_id
+              and tran.data_dt between '20260101' and '20260331'
+              and coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0) > 0
+        )
+
+  - id: "s020"
+    category: "transaction_analysis"
+    scenario: "客户交易排行"
+    difficulty: "medium"
+    question: "列出2026年一季度总交易金额最高的前10个客户，并带上所属分公司和营业部。"
+    required_tables: ["dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["total_buy_amount", "total_sell_amount", "transaction_amount"]
+    sql: |
+      select
+          tran.pty_id,
+          branch.up_org_name,
+          branch.org_name,
+          sum(coalesce(tran.buy_amt, 0)) as total_buy_amount,
+          sum(coalesce(tran.sell_amt, 0)) as total_sell_amount,
+          sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as transaction_amount
+      from dwd_cust_tran_d tran
+      inner join ads_cust_info_d cust
+        on tran.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+      where tran.data_dt between '20260101' and '20260331'
+      group by tran.pty_id, branch.up_org_name, branch.org_name
+      having sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) > 0
+      order by transaction_amount desc
+      limit 10
+
+  - id: "s021"
+    category: "transaction_analysis"
+    scenario: "月度交易分析"
+    difficulty: "medium"
+    question: "2026年一季度科创板交易金额按月份分别是多少？"
+    required_tables: ["dwd_cust_tran_d", "dim_product"]
+    expected_metrics: ["customer_count", "transaction_amount"]
+    sql: |
+      select
+          substr(tran.data_dt, 1, 6) as trade_month,
+          count(distinct tran.pty_id) as customer_count,
+          sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as transaction_amount
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      where tran.data_dt between '20260101' and '20260331'
+        and prdt.prdt_type_name = '科创板'
+      group by trade_month
+      order by trade_month
+
+  - id: "s022"
+    category: "holding_analysis"
+    scenario: "ETF持仓画像"
+    difficulty: "complex"
+    question: "2026年3月31日持有ETF的客户，按性别和学历统计人数和持仓市值。"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count", "total_market_value"]
+    sql: |
+      select
+          coalesce(gender_dict."describe", cust.gender_cd) as gender_name,
+          coalesce(edu."describe", cust.edu_cd) as education,
+          count(distinct hold.pty_id) as customer_count,
+          sum(coalesce(hold.mkt_val, 0)) as total_market_value
+      from dwd_cust_hold_d hold
+      inner join dim_product prdt
+        on hold.prdt_id = prdt.prdt_id
+      inner join ads_cust_info_d cust
+        on hold.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public gender_dict
+        on gender_dict.code_type_id = '500'
+       and cust.gender_cd = gender_dict.code
+      left join dim_public edu
+        on edu.code_type_id = '600'
+       and cust.edu_cd = edu.code
+      where hold.data_dt = '20260331'
+        and prdt.prdt_type_name = 'ETF'
+      group by gender_name, education
+      order by total_market_value desc
+
+  - id: "s023"
+    category: "holding_analysis"
+    scenario: "债券持仓分析"
+    difficulty: "medium"
+    question: "2026年3月31日债券类产品持仓市值按客户等级怎么分布？"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count", "bond_market_value"]
+    sql: |
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          count(distinct hold.pty_id) as customer_count,
+          sum(coalesce(hold.mkt_val, 0)) as bond_market_value
+      from dwd_cust_hold_d hold
+      inner join dim_product prdt
+        on hold.prdt_id = prdt.prdt_id
+      inner join ads_cust_info_d cust
+        on hold.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      where hold.data_dt = '20260331'
+        and prdt.up_prdt_type_name = '债券'
+      group by customer_level
+      order by bond_market_value desc
+
+  - id: "s024"
+    category: "regional_transaction"
+    scenario: "地域交易分析"
+    difficulty: "complex"
+    question: "2026年一季度股票交易金额最高的前10个城市是哪些？"
+    required_tables: ["dwd_cust_tran_d", "dim_product", "ads_cust_info_d"]
+    expected_metrics: ["active_customer_count", "stock_transaction_amount"]
+    sql: |
+      select
+          cust.city_name,
+          count(distinct tran.pty_id) as active_customer_count,
+          sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as stock_transaction_amount
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      inner join ads_cust_info_d cust
+        on tran.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      where tran.data_dt between '20260101' and '20260331'
+        and prdt.up_prdt_type_name = '股票'
+      group by cust.city_name
+      order by stock_transaction_amount desc
+      limit 10
+
+  - id: "s025"
+    category: "fund_flow_asset"
+    scenario: "资金流出客户筛选"
+    difficulty: "complex"
+    question: "找出2026年一季度净流出超过10万元且3月31日期末总资产低于10万元的客户。"
+    required_tables: ["dws_cust_fin_d", "dws_cust_aset_d"]
+    expected_metrics: ["net_outflow", "end_total_asset"]
+    sql: |
+      with flow_by_customer as (
+          select
+              pty_id,
+              sum(coalesce(cash_out, 0) + coalesce(tran_out, 0) + coalesce(assign_out, 0)
+                - coalesce(cash_in, 0) - coalesce(tran_in, 0) - coalesce(assign_in, 0)) as net_outflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          flow.pty_id,
+          flow.net_outflow,
+          coalesce(aset.nm_tot_aset, 0) + coalesce(aset.fc_pur_aset, 0) as end_total_asset
+      from flow_by_customer flow
+      inner join dws_cust_aset_d aset
+        on flow.pty_id = aset.pty_id
+       and aset.data_dt = '20260331'
+      where flow.net_outflow > 100000
+        and coalesce(aset.nm_tot_aset, 0) + coalesce(aset.fc_pur_aset, 0) < 100000
+      order by flow.net_outflow desc
+      limit 20
+
+  - id: "s026"
+    category: "holding_analysis"
+    scenario: "高资产客户持仓"
+    difficulty: "complex"
+    question: "2026年一季度日均总资产超过30万元的客户，在3月31日持仓的产品一级分类分布如何？"
+    required_tables: ["dws_cust_aset_d", "dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["customer_count", "product_count", "total_market_value"]
+    sql: |
+      with high_asset as (
+          select
+              pty_id,
+              sum(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) / 90.0 as avg_daily_asset
+          from dws_cust_aset_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+          having sum(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) / 90.0 > 300000
+      )
+      select
+          prdt.up_prdt_type_name,
+          count(distinct hold.pty_id) as customer_count,
+          count(distinct hold.prdt_id) as product_count,
+          sum(coalesce(hold.mkt_val, 0)) as total_market_value
+      from high_asset asset
+      inner join dwd_cust_hold_d hold
+        on asset.pty_id = hold.pty_id
+       and hold.data_dt = '20260331'
+      inner join dim_product prdt
+        on hold.prdt_id = prdt.prdt_id
+      group by prdt.up_prdt_type_name
+      order by total_market_value desc
+
+  - id: "s027"
+    category: "branch_profile"
+    scenario: "营业部客户画像"
+    difficulty: "simple"
+    question: "客户数最多的前10个营业部，分别有多少客户、平均年龄是多少？"
+    required_tables: ["ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["customer_count", "avg_age"]
+    sql: |
+      select
+          branch.up_org_name,
+          branch.org_name,
+          count(*) as customer_count,
+          avg(cust.cust_age) as avg_age
+      from ads_cust_info_d cust
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+      where cust.data_dt = '20260531'
+      group by branch.up_org_name, branch.org_name
+      order by customer_count desc, avg_age desc
+      limit 10
+
+  - id: "s028"
+    category: "holding_analysis"
+    scenario: "信用账户持仓"
+    difficulty: "medium"
+    question: "2026年3月31日信用账户持仓客户按等级统计人数和持仓市值。"
+    required_tables: ["dwd_cust_hold_d", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["customer_count", "credit_market_value"]
+    sql: |
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          count(distinct hold.pty_id) as customer_count,
+          sum(coalesce(hold.mkt_val, 0)) as credit_market_value
+      from dwd_cust_hold_d hold
+      inner join ads_cust_info_d cust
+        on hold.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      where hold.data_dt = '20260331'
+        and hold.sys_source = 'fc'
+      group by customer_level
+      order by credit_market_value desc
+
+  - id: "s029"
+    category: "transaction_fee"
+    scenario: "费用分析"
+    difficulty: "medium"
+    question: "2026年一季度交易佣金和费用按产品一级、二级分类排名，取费用最高的前20类。"
+    required_tables: ["dwd_cust_tran_d", "dim_product"]
+    expected_metrics: ["total_rake", "total_fare", "total_fee"]
+    sql: |
+      select
+          prdt.up_prdt_type_name,
+          prdt.prdt_type_name,
+          sum(coalesce(tran.buy_rake, 0) + coalesce(tran.sell_rake, 0)) as total_rake,
+          sum(coalesce(tran.buy_fare, 0) + coalesce(tran.sell_fare, 0)) as total_fare,
+          sum(coalesce(tran.buy_rake, 0) + coalesce(tran.sell_rake, 0)
+            + coalesce(tran.buy_fare, 0) + coalesce(tran.sell_fare, 0)) as total_fee
+      from dwd_cust_tran_d tran
+      inner join dim_product prdt
+        on tran.prdt_id = prdt.prdt_id
+      where tran.data_dt between '20260101' and '20260331'
+      group by prdt.up_prdt_type_name, prdt.prdt_type_name
+      having total_fee > 0
+      order by total_fee desc
+      limit 20
+
+  - id: "s030"
+    category: "holding_analysis"
+    scenario: "热门持仓产品"
+    difficulty: "medium"
+    question: "2026年3月31日持仓客户数最多的前10个产品是什么？"
+    required_tables: ["dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["customer_count", "total_market_value"]
+    sql: |
+      select
+          prdt.prdt_name,
+          prdt.prdt_type_name,
+          prdt.up_prdt_type_name,
+          count(distinct hold.pty_id) as customer_count,
+          sum(coalesce(hold.mkt_val, 0)) as total_market_value
+      from dwd_cust_hold_d hold
+      inner join dim_product prdt
+        on hold.prdt_id = prdt.prdt_id
+      where hold.data_dt = '20260331'
+      group by prdt.prdt_name, prdt.prdt_type_name, prdt.up_prdt_type_name
+      having sum(coalesce(hold.mkt_val, 0)) > 0
+      order by customer_count desc, total_market_value desc
+      limit 10

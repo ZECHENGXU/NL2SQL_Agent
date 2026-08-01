@@ -21,20 +21,22 @@ def main() -> None:
     args = parser.parse_args()
 
     retriever = HybridMetadataRetriever()
-    context = retriever.build_context(args.query, top_k=args.top_k)
-    if args.json:
-        print(json.dumps(context, ensure_ascii=False, indent=2, default=_json_default))
-        return
+    try:
+        context = retriever.build_context(args.query, top_k=args.top_k)
+        if args.json:
+            print(json.dumps(context, ensure_ascii=False, indent=2, default=_json_default))
+            return
 
-    print(f"query={context['query']}")
-    print(f"tables={context['tables']}")
-    print(f"metrics={context['metrics']}")
-    print(f"terms={context['terms']}")
-    print(f"examples={context['examples']}")
-    print("chunks=")
-    for chunk in context["chunks"]:
-        print(f"- {chunk['id']} [{chunk['chunk_type']}] {chunk['source']} score={chunk['score']}")
-        print(f"  {chunk['text'][:180]}")
+        print(f"query={context['query']}")
+        print(f"tables={context['tables']}")
+        print(f"metrics={context['metrics']}")
+        print(f"terms={context['terms']}")
+        print("chunks=")
+        for chunk in context["chunks"]:
+            print(f"- {chunk['id']} [{chunk['chunk_type']}] {chunk['source']} score={chunk['score']}")
+            print(f"  {chunk['text'][:180]}")
+    finally:
+        retriever.close()
 
 
 def _json_default(value: Any) -> str:
@@ -43,4 +45,3 @@ def _json_default(value: Any) -> str:
 
 if __name__ == "__main__":
     main()
-

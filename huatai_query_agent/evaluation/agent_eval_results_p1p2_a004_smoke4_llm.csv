@@ -1,0 +1,135 @@
+﻿query_id,sql_mode,executable,agent_completed,candidate_executable,exact_match,row_count_match,columns_match,projection_arity_match,semantic_schema_match,ordered_rows_match,unordered_rows_match,ordered_semantic_match,unordered_semantic_match,semantic_result_match,order_sensitive,standard_rows,agent_rows,standard_columns,agent_columns,matched_score,confidence,elapsed_ms,error_type,error_tags,column_mapping,validation_errors,execution_error,trace_nodes,llm_call_count,prompt_tokens,completion_tokens,total_tokens,standard_hash,agent_hash,thread_id,repetition,run_id,model,final_answer,sql_generation_attempt_count,sql_generation_elapsed_ms,sql_generation_started_at,sql_generation_completed_at,sql_generation_attempts,sql_plan,candidate_sql,standard_sql
+a004,llm,True,False,True,False,False,True,True,True,False,False,False,False,False,True,14,16,"[""up_org_name"", ""org_name"", ""customer_count"", ""total_asset"", ""active_customer_rate"", ""turnover"", ""total_fee"", ""net_inflow"", ""holding_market_value"", ""asset_rank_in_company""]","[""up_org_name"", ""org_name"", ""customer_count"", ""total_asset"", ""active_customer_rate"", ""turnover"", ""total_fee"", ""net_inflow"", ""holding_market_value"", ""asset_rank_in_company""]",0.2267,0.2,114.345,validator_false_positive,"[""validator_false_positive"", ""missing_period_policy_violation"", ""row_count_mismatch"", ""semantic_value_error""]","{""up_org_name"": ""up_org_name"", ""org_name"": ""org_name"", ""customer_count"": ""customer_count"", ""total_asset"": ""total_asset"", ""active_customer_rate"": ""active_customer_rate"", ""turnover"": ""turnover"", ""total_fee"": ""total_fee"", ""net_inflow"": ""net_inflow"", ""holding_market_value"": ""holding_market_value"", ""asset_rank_in_company"": ""asset_rank_in_company""}","Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy.",,init_run -> load_thread_context -> normalize_question -> detect_followup -> parse_intent -> retrieve_metadata -> fill_slots -> check_intent_slots -> resolve_product -> plan_sql -> generate_sql -> validate_sql -> repair_sql -> validate_sql -> repair_sql -> validate_sql -> human_review_or_explain -> persist_state,6,64832,23984,88816,6f8edd86a93cf593,0c262c5a11880b59,eval:p1p2-a004-smoke4-20260731:r1:a004,1,p1p2-a004-smoke4-20260731,deepseek-v4-pro,"查询未能自动完成，已进入人工复核路径。原因：Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy.",3,186945.3574,2026-07-31T14:54:53.071388+00:00,2026-07-31T14:58:00.183803+00:00,"[{""attempt"": 1, ""attempt_type"": ""initial"", ""status"": ""ok"", ""started_at"": ""2026-07-31T14:54:53.071388+00:00"", ""completed_at"": ""2026-07-31T14:55:47.818822+00:00"", ""elapsed_ms"": 54744.536, ""model"": ""deepseek-v4-pro"", ""usage"": {""completion_tokens"": 3958, ""prompt_tokens"": 13028, ""total_tokens"": 16986, ""completion_tokens_details"": {""accepted_prediction_tokens"": null, ""audio_tokens"": null, ""reasoning_tokens"": 2833, ""rejected_prediction_tokens"": null}, ""prompt_tokens_details"": {""audio_tokens"": null, ""cache_write_tokens"": null, ""cached_tokens"": 1920}, ""prompt_cache_hit_tokens"": 1920, ""prompt_cache_miss_tokens"": 11108}, ""sql"": ""WITH cust_branch AS (\n  SELECT c.pty_id, c.org_id, b.up_org_name, b.org_name\n  FROM ads_cust_info_d c\n  LEFT JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531'\n  WHERE c.data_dt = '20260531'\n),\n\nasset AS (\n  SELECT pty_id, sum(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) AS total_asset\n  FROM dws_cust_aset_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\n\ntrade AS (\n  SELECT pty_id,\n         sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) AS turnover,\n         sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0) + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) AS total_fee\n  FROM dwd_cust_tran_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\n\nfin AS (\n  SELECT pty_id,\n         sum(coalesce(cash_in, 0) - coalesce(cash_out, 0) + coalesce(tran_in, 0) - coalesce(tran_out, 0) + coalesce(assign_in, 0) - coalesce(assign_out, 0)) AS net_inflow\n  FROM dws_cust_fin_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\n\nhold AS (\n  SELECT pty_id, sum(coalesce(mkt_val, 0)) AS mkt_val\n  FROM dwd_cust_hold_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\n\nbranch_agg AS (\n  SELECT cb.up_org_name,\n         cb.org_name,\n         COUNT(DISTINCT cb.pty_id) AS customer_count,\n         COALESCE(SUM(a.total_asset), 0) AS total_asset,\n         CAST(SUM(CASE WHEN COALESCE(t.turnover, 0) > 0 THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(DISTINCT cb.pty_id) AS active_customer_rate,\n         COALESCE(SUM(t.turnover), 0) AS turnover,\n         COALESCE(SUM(t.total_fee), 0) AS total_fee,\n         COALESCE(SUM(f.net_inflow), 0) AS net_inflow,\n         COALESCE(SUM(h.mkt_val), 0) AS holding_market_value\n  FROM cust_branch cb\n  LEFT JOIN asset a ON cb.pty_id = a.pty_id\n  LEFT JOIN trade t ON cb.pty_id = t.pty_id\n  LEFT JOIN fin f ON cb.pty_id = f.pty_id\n  LEFT JOIN hold h ON cb.pty_id = h.pty_id\n  GROUP BY cb.org_id, cb.up_org_name, cb.org_name\n)\n\nSELECT up_org_name,\n       org_name,\n       customer_count,\n       total_asset,\n       active_customer_rate,\n       turnover,\n       total_fee,\n       net_inflow,\n       holding_market_value,\n       DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company\nFROM branch_agg\nWHERE asset_rank_in_company <= 3\nORDER BY up_org_name, asset_rank_in_company"", ""error"": """", ""validation"": {""passed"": false, ""errors"": [""Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy.""], ""warnings"": [], ""checks"": {""readonly"": ""passed"", ""basic_syntax"": ""passed"", ""metadata_whitelist"": ""passed"", ""field_whitelist"": ""passed"", ""metric_rules"": ""passed"", ""snapshot_policy"": ""passed"", ""projection_contract"": ""passed"", ""dictionary_translation"": ""passed"", ""window_contract"": ""passed"", ""missing_fact_policy"": ""passed"", ""missing_period_policy"": ""failed"", ""eligibility_filters"": ""passed"", ""top_n_contract"": ""passed""}}}, {""attempt"": 2, ""attempt_type"": ""repair"", ""status"": ""ok"", ""started_at"": ""2026-07-31T14:55:47.899828+00:00"", ""completed_at"": ""2026-07-31T14:57:11.065214+00:00"", ""elapsed_ms"": 83163.1941, ""model"": ""deepseek-v4-pro"", ""usage"": {""completion_tokens"": 4871, ""prompt_tokens"": 14312, ""total_tokens"": 19183, ""completion_tokens_details"": {""accepted_prediction_tokens"": null, ""audio_tokens"": null, ""reasoning_tokens"": 3571, ""rejected_prediction_tokens"": null}, ""prompt_tokens_details"": {""audio_tokens"": null, ""cache_write_tokens"": null, ""cached_tokens"": 1920}, ""prompt_cache_hit_tokens"": 1920, ""prompt_cache_miss_tokens"": 12392}, ""sql"": ""WITH cust_branch AS (\n  SELECT c.pty_id, c.org_id, b.up_org_name, b.org_name\n  FROM ads_cust_info_d c\n  LEFT JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531'\n  WHERE c.data_dt = '20260531'\n),\n\ndates AS (\n  SELECT unnest(generate_series('2026-01-01'::date, '2026-03-31'::date, '1 day'::interval)) AS dt\n),\n\ncust_branch_dates AS (\n  SELECT cb.pty_id, cb.org_id, cb.up_org_name, cb.org_name, d.dt\n  FROM cust_branch cb\n  CROSS JOIN dates d\n),\n\nasset AS (\n  SELECT pty_id, sum(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) AS total_asset\n  FROM dws_cust_aset_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\n\ntrade AS (\n  SELECT cbd.pty_id, cbd.org_id, cbd.up_org_name, cbd.org_name,\n         sum(coalesce(t.buy_amt, 0) + coalesce(t.sell_amt, 0)) AS turnover,\n         sum(coalesce(t.buy_rake, 0) + coalesce(t.sell_rake, 0) + coalesce(t.buy_fare, 0) + coalesce(t.sell_fare, 0)) AS total_fee\n  FROM cust_branch_dates cbd\n  LEFT JOIN dwd_cust_tran_d t ON cbd.pty_id = t.pty_id AND t.data_dt = to_char(cbd.dt, 'yyyymmdd')\n  GROUP BY cbd.pty_id, cbd.org_id, cbd.up_org_name, cbd.org_name\n),\n\nfin AS (\n  SELECT cbd.pty_id, cbd.org_id, cbd.up_org_name, cbd.org_name,\n         sum(coalesce(f.cash_in, 0) - coalesce(f.cash_out, 0) + coalesce(f.tran_in, 0) - coalesce(f.tran_out, 0) + coalesce(f.assign_in, 0) - coalesce(f.assign_out, 0)) AS net_inflow\n  FROM cust_branch_dates cbd\n  LEFT JOIN dws_cust_fin_d f ON cbd.pty_id = f.pty_id AND f.data_dt = to_char(cbd.dt, 'yyyymmdd')\n  GROUP BY cbd.pty_id, cbd.org_id, cbd.up_org_name, cbd.org_name\n),\n\nhold AS (\n  SELECT pty_id, sum(coalesce(mkt_val, 0)) AS mkt_val\n  FROM dwd_cust_hold_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\n\nbranch_agg AS (\n  SELECT cb.up_org_name,\n         cb.org_name,\n         COUNT(DISTINCT cb.pty_id) AS customer_count,\n         COALESCE(SUM(a.total_asset), 0) AS total_asset,\n         CAST(SUM(CASE WHEN COALESCE(t.turnover, 0) > 0 THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(DISTINCT cb.pty_id) AS active_customer_rate,\n         COALESCE(SUM(t.turnover), 0) AS turnover,\n         COALESCE(SUM(t.total_fee), 0) AS total_fee,\n         COALESCE(SUM(f.net_inflow), 0) AS net_inflow,\n         COALESCE(SUM(h.mkt_val), 0) AS holding_market_value\n  FROM cust_branch cb\n  LEFT JOIN asset a ON cb.pty_id = a.pty_id\n  LEFT JOIN trade t ON cb.pty_id = t.pty_id\n  LEFT JOIN fin f ON cb.pty_id = f.pty_id\n  LEFT JOIN hold h ON cb.pty_id = h.pty_id\n  GROUP BY cb.org_id, cb.up_org_name, cb.org_name\n)\n\nSELECT up_org_name,\n       org_name,\n       customer_count,\n       total_asset,\n       active_customer_rate,\n       turnover,\n       total_fee,\n       net_inflow,\n       holding_market_value,\n       DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company\nFROM branch_agg\nQUALIFY asset_rank_in_company <= 3\nORDER BY up_org_name, asset_rank_in_company"", ""error"": """", ""validation"": {""passed"": false, ""errors"": [""Snapshot policy for dwd_cust_tran_d expects range 20260101-20260331, but SQL uses ['no literal date']."", ""Snapshot policy for dws_cust_fin_d expects range 20260101-20260331, but SQL uses ['no literal date'].""], ""warnings"": [], ""checks"": {""readonly"": ""passed"", ""basic_syntax"": ""passed"", ""metadata_whitelist"": ""passed"", ""field_whitelist"": ""passed"", ""metric_rules"": ""passed"", ""snapshot_policy"": ""failed"", ""projection_contract"": ""passed"", ""dictionary_translation"": ""passed"", ""window_contract"": ""passed"", ""missing_fact_policy"": ""passed"", ""missing_period_policy"": ""passed"", ""eligibility_filters"": ""passed"", ""top_n_contract"": ""passed""}}}, {""attempt"": 3, ""attempt_type"": ""repair"", ""status"": ""ok"", ""started_at"": ""2026-07-31T14:57:11.143612+00:00"", ""completed_at"": ""2026-07-31T14:58:00.183803+00:00"", ""elapsed_ms"": 49037.6273, ""model"": ""deepseek-v4-pro"", ""usage"": {""completion_tokens"": 3819, ""prompt_tokens"": 14588, ""total_tokens"": 18407, ""completion_tokens_details"": {""accepted_prediction_tokens"": null, ""audio_tokens"": null, ""reasoning_tokens"": 2719, ""rejected_prediction_tokens"": null}, ""prompt_tokens_details"": {""audio_tokens"": null, ""cache_write_tokens"": null, ""cached_tokens"": 9984}, ""prompt_cache_hit_tokens"": 9984, ""prompt_cache_miss_tokens"": 4604}, ""sql"": ""WITH cust_branch AS (\n  SELECT c.pty_id, c.org_id, b.up_org_name, b.org_name\n  FROM ads_cust_info_d c\n  LEFT JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531'\n  WHERE c.data_dt = '20260531'\n),\n\nasset AS (\n  SELECT pty_id,\n         SUM(COALESCE(nm_tot_aset, 0) + COALESCE(fc_pur_aset, 0)) AS total_asset\n  FROM dws_cust_aset_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\n\ntrade AS (\n  SELECT pty_id,\n         SUM(COALESCE(buy_amt, 0) + COALESCE(sell_amt, 0)) AS turnover,\n         SUM(COALESCE(buy_rake, 0) + COALESCE(sell_rake, 0) + COALESCE(buy_fare, 0) + COALESCE(sell_fare, 0)) AS total_fee\n  FROM dwd_cust_tran_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\n\nfin AS (\n  SELECT pty_id,\n         SUM(COALESCE(cash_in, 0) - COALESCE(cash_out, 0) + COALESCE(tran_in, 0) - COALESCE(tran_out, 0) + COALESCE(assign_in, 0) - COALESCE(assign_out, 0)) AS net_inflow\n  FROM dws_cust_fin_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\n\nhold AS (\n  SELECT pty_id,\n         SUM(COALESCE(mkt_val, 0)) AS mkt_val\n  FROM dwd_cust_hold_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\n\nbranch_agg AS (\n  SELECT\n    cb.up_org_name,\n    cb.org_name,\n    COUNT(DISTINCT cb.pty_id) AS customer_count,\n    COALESCE(SUM(a.total_asset), 0) AS total_asset,\n    CAST(COUNT(DISTINCT CASE WHEN COALESCE(t.turnover, 0) > 0 THEN cb.pty_id END) AS DOUBLE) / COUNT(DISTINCT cb.pty_id) AS active_customer_rate,\n    COALESCE(SUM(t.turnover), 0) AS turnover,\n    COALESCE(SUM(t.total_fee), 0) AS total_fee,\n    COALESCE(SUM(f.net_inflow), 0) AS net_inflow,\n    COALESCE(SUM(h.mkt_val), 0) AS holding_market_value\n  FROM cust_branch cb\n  LEFT JOIN asset a ON cb.pty_id = a.pty_id\n  LEFT JOIN trade t ON cb.pty_id = t.pty_id\n  LEFT JOIN fin f ON cb.pty_id = f.pty_id\n  LEFT JOIN hold h ON cb.pty_id = h.pty_id\n  GROUP BY cb.org_id, cb.up_org_name, cb.org_name\n)\n\nSELECT\n  up_org_name,\n  org_name,\n  customer_count,\n  total_asset,\n  active_customer_rate,\n  turnover,\n  total_fee,\n  net_inflow,\n  holding_market_value,\n  DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company\nFROM branch_agg\nQUALIFY asset_rank_in_company <= 3\nORDER BY up_org_name, asset_rank_in_company"", ""error"": """", ""validation"": {""passed"": false, ""errors"": [""Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy.""], ""warnings"": [], ""checks"": {""readonly"": ""passed"", ""basic_syntax"": ""passed"", ""metadata_whitelist"": ""passed"", ""field_whitelist"": ""passed"", ""metric_rules"": ""passed"", ""snapshot_policy"": ""passed"", ""projection_contract"": ""passed"", ""dictionary_translation"": ""passed"", ""window_contract"": ""passed"", ""missing_fact_policy"": ""passed"", ""missing_period_policy"": ""failed"", ""eligibility_filters"": ""passed"", ""top_n_contract"": ""passed""}}}]","{""target"": ""营业部经营对比表：计算每个营业部客户数、期末总资产、活跃客户率、买卖交易额、佣金及费用合计、资金净流入、期末持仓市值，并在分公司内部按总资产降序排名，只取前3名"", ""tables"": [""ads_cust_info_d"", ""dim_branch"", ""dws_cust_aset_d"", ""dwd_cust_tran_d"", ""dws_cust_fin_d"", ""dwd_cust_hold_d""], ""joins"": [""以 ads_cust_info_d (快照20260531) 为基础客户集，通过 org_id 关联 dim_branch (快照20260531) 获取营业部名称和分公司名称"", ""客户集 LEFT JOIN 期末资产子查询 (dws_cust_aset_d, data_dt='20260331') 按 pty_id 关联"", ""客户集 LEFT JOIN 交易聚合子查询 (dwd_cust_tran_d, data_dt BETWEEN '20260101' AND '20260331') 按 pty_id 关联"", ""客户集 LEFT JOIN 资金聚合子查询 (dws_cust_fin_d, data_dt BETWEEN '20260101' AND '20260331') 按 pty_id 关联"", ""客户集 LEFT JOIN 持仓聚合子查询 (dwd_cust_hold_d, data_dt='20260331') 按 pty_id 关联""], ""filters"": [""ads_cust_info_d.data_dt = '20260531'"", ""dim_branch.data_dt = '20260531'"", ""dws_cust_aset_d.data_dt = '20260331'"", ""dwd_cust_tran_d.data_dt BETWEEN '20260101' AND '20260331'"", ""dws_cust_fin_d.data_dt BETWEEN '20260101' AND '20260331'"", ""dwd_cust_hold_d.data_dt = '20260331'""], ""metrics"": [""customer_count = COUNT(DISTINCT cust.pty_id)"", ""total_asset = SUM(COALESCE(aset.total_asset, 0))"", ""active_customer_rate = SUM(CASE WHEN COALESCE(tran.turnover, 0) > 0 THEN 1 ELSE 0 END) / COUNT(DISTINCT cust.pty_id)"", ""turnover = SUM(COALESCE(tran.turnover, 0))"", ""total_fee = SUM(COALESCE(tran.total_fee, 0))"", ""net_inflow = SUM(COALESCE(fin.net_inflow, 0))"", ""holding_market_value = SUM(COALESCE(hold.mkt_val, 0))""], ""population"": ""2026年5月31日客户归属快照中的全部营业部客户（取自 ads_cust_info_d.data_dt='20260531'）"", ""grain"": [""org_id (营业部)""], ""output_columns"": [{""name"": ""up_org_name"", ""alias"": ""up_org_name"", ""semantic_type"": ""up_org_name"", ""required"": true, ""position"": 1, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""org_name"", ""alias"": ""org_name"", ""semantic_type"": ""org_name"", ""required"": true, ""position"": 2, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""customer_count"", ""alias"": ""customer_count"", ""semantic_type"": ""customer_count"", ""required"": true, ""position"": 3, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""total_asset"", ""alias"": ""total_asset"", ""semantic_type"": ""total_asset"", ""required"": true, ""position"": 4, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""active_customer_rate"", ""alias"": ""active_customer_rate"", ""semantic_type"": ""active_customer_rate"", ""required"": true, ""position"": 5, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-07, ""rtol"": 1e-06}}, {""name"": ""turnover"", ""alias"": ""turnover"", ""semantic_type"": ""turnover"", ""required"": true, ""position"": 6, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""total_fee"", ""alias"": ""total_fee"", ""semantic_type"": ""total_fee"", ""required"": true, ""position"": 7, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""net_inflow"", ""alias"": ""net_inflow"", ""semantic_type"": ""net_inflow"", ""required"": true, ""position"": 8, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""holding_market_value"", ""alias"": ""holding_market_value"", ""semantic_type"": ""holding_market_value"", ""required"": true, ""position"": 9, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}, {""name"": ""asset_rank_in_company"", ""alias"": ""asset_rank_in_company"", ""semantic_type"": ""asset_rank_in_company"", ""required"": true, ""position"": 10, ""alias_strict"": false, ""numeric_tolerance"": {""atol"": 1e-08, ""rtol"": 1e-09}}], ""group_by"": [""cust.org_id"", ""branch.up_org_name"", ""branch.org_name""], ""eligibility_filters"": [""最终过滤 asset_rank_in_company <= 3""], ""snapshot_policy"": {""customer_snapshot"": ""20260531"", ""asset_snapshot"": ""20260331"", ""branch_snapshot"": ""20260531"", ""ads_cust_info_d"": ""20260531"", ""dim_branch"": ""20260531"", ""dws_cust_aset_d"": ""20260331"", ""dwd_cust_tran_d"": ""20260101 to 20260331"", ""dws_cust_fin_d"": ""20260101 to 20260331"", ""dwd_cust_hold_d"": ""20260331""}, ""missing_fact_policy"": {""期末总资产"": ""zero_fill_after_aggregation"", ""买卖交易额"": ""zero_fill_after_aggregation"", ""佣金及费用合计"": ""zero_fill_after_aggregation"", ""资金净流入"": ""zero_fill_after_aggregation"", ""期末持仓市值"": ""zero_fill_after_aggregation""}, ""missing_period_policy"": ""zero_fill"", ""dictionary_translation"": [], ""window"": [{""function"": ""dense_rank"", ""partition_by"": [""up_org_name""], ""order_by"": [{""expression"": ""total_asset"", ""direction"": ""desc""}], ""tie_breaker"": []}], ""order_by"": [{""expression"": ""up_org_name"", ""direction"": ""asc"", ""nulls"": ""last""}, {""expression"": ""asset_rank_in_company"", ""direction"": ""asc"", ""nulls"": ""last""}], ""top_n"": 3, ""expect_nonempty"": true, ""calculation_notes"": [""营业部客户数以客户快照为母集；交易、资金数据缺失按0。"", ""活跃客户率为一季度交易额大于0的客户数除以营业部客户数。"", ""在各分公司内部按期末总资产排名。""], ""strategy"": ""llm_text_to_sql"", ""matched_query_id"": null}","WITH cust_branch AS (
+  SELECT c.pty_id, c.org_id, b.up_org_name, b.org_name
+  FROM ads_cust_info_d c
+  LEFT JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531'
+  WHERE c.data_dt = '20260531'
+),
+
+asset AS (
+  SELECT pty_id,
+         SUM(COALESCE(nm_tot_aset, 0) + COALESCE(fc_pur_aset, 0)) AS total_asset
+  FROM dws_cust_aset_d
+  WHERE data_dt = '20260331'
+  GROUP BY pty_id
+),
+
+trade AS (
+  SELECT pty_id,
+         SUM(COALESCE(buy_amt, 0) + COALESCE(sell_amt, 0)) AS turnover,
+         SUM(COALESCE(buy_rake, 0) + COALESCE(sell_rake, 0) + COALESCE(buy_fare, 0) + COALESCE(sell_fare, 0)) AS total_fee
+  FROM dwd_cust_tran_d
+  WHERE data_dt BETWEEN '20260101' AND '20260331'
+  GROUP BY pty_id
+),
+
+fin AS (
+  SELECT pty_id,
+         SUM(COALESCE(cash_in, 0) - COALESCE(cash_out, 0) + COALESCE(tran_in, 0) - COALESCE(tran_out, 0) + COALESCE(assign_in, 0) - COALESCE(assign_out, 0)) AS net_inflow
+  FROM dws_cust_fin_d
+  WHERE data_dt BETWEEN '20260101' AND '20260331'
+  GROUP BY pty_id
+),
+
+hold AS (
+  SELECT pty_id,
+         SUM(COALESCE(mkt_val, 0)) AS mkt_val
+  FROM dwd_cust_hold_d
+  WHERE data_dt = '20260331'
+  GROUP BY pty_id
+),
+
+branch_agg AS (
+  SELECT
+    cb.up_org_name,
+    cb.org_name,
+    COUNT(DISTINCT cb.pty_id) AS customer_count,
+    COALESCE(SUM(a.total_asset), 0) AS total_asset,
+    CAST(COUNT(DISTINCT CASE WHEN COALESCE(t.turnover, 0) > 0 THEN cb.pty_id END) AS DOUBLE) / COUNT(DISTINCT cb.pty_id) AS active_customer_rate,
+    COALESCE(SUM(t.turnover), 0) AS turnover,
+    COALESCE(SUM(t.total_fee), 0) AS total_fee,
+    COALESCE(SUM(f.net_inflow), 0) AS net_inflow,
+    COALESCE(SUM(h.mkt_val), 0) AS holding_market_value
+  FROM cust_branch cb
+  LEFT JOIN asset a ON cb.pty_id = a.pty_id
+  LEFT JOIN trade t ON cb.pty_id = t.pty_id
+  LEFT JOIN fin f ON cb.pty_id = f.pty_id
+  LEFT JOIN hold h ON cb.pty_id = h.pty_id
+  GROUP BY cb.org_id, cb.up_org_name, cb.org_name
+)
+
+SELECT
+  up_org_name,
+  org_name,
+  customer_count,
+  total_asset,
+  active_customer_rate,
+  turnover,
+  total_fee,
+  net_inflow,
+  holding_market_value,
+  DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company
+FROM branch_agg
+QUALIFY asset_rank_in_company <= 3
+ORDER BY up_org_name, asset_rank_in_company","with asset as (
+    select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+    from dws_cust_aset_d
+    where data_dt = '20260331'
+),
+trade as (
+    select
+        pty_id,
+        sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover,
+        sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+          + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee
+    from dwd_cust_tran_d
+    where data_dt between '20260101' and '20260331'
+    group by pty_id
+),
+flow as (
+    select
+        pty_id,
+        sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+          - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+    from dws_cust_fin_d
+    where data_dt between '20260101' and '20260331'
+    group by pty_id
+),
+holding as (
+    select pty_id, sum(coalesce(mkt_val, 0)) as holding_market_value
+    from dwd_cust_hold_d
+    where data_dt = '20260331'
+    group by pty_id
+),
+branch_summary as (
+    select
+        branch.up_org_name,
+        branch.org_name,
+        count(*) as customer_count,
+        sum(coalesce(asset.total_asset, 0)) as total_asset,
+        count(*) filter (where coalesce(trade.turnover, 0) > 0) * 1.0 / count(*) as active_customer_rate,
+        sum(coalesce(trade.turnover, 0)) as turnover,
+        sum(coalesce(trade.total_fee, 0)) as total_fee,
+        sum(coalesce(flow.net_inflow, 0)) as net_inflow,
+        sum(coalesce(holding.holding_market_value, 0)) as holding_market_value
+    from ads_cust_info_d cust
+    inner join dim_branch branch
+      on cust.org_id = branch.org_id
+     and branch.data_dt = '20260531'
+    left join asset on cust.pty_id = asset.pty_id
+    left join trade on cust.pty_id = trade.pty_id
+    left join flow on cust.pty_id = flow.pty_id
+    left join holding on cust.pty_id = holding.pty_id
+    where cust.data_dt = '20260531'
+    group by branch.up_org_name, branch.org_name
+),
+ranked as (
+    select
+        *,
+        dense_rank() over (partition by up_org_name order by total_asset desc) as asset_rank_in_company
+    from branch_summary
+)
+select *
+from ranked
+where asset_rank_in_company <= 3
+order by up_org_name, asset_rank_in_company, org_name"

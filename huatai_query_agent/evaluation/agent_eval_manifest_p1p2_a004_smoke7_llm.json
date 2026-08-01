@@ -1,0 +1,416 @@
+{
+  "schema_version": "2.0",
+  "created_at": "2026-07-31T16:11:25.064119+00:00",
+  "run_id": "p1p2-a004-smoke7-20260731",
+  "configuration": {
+    "sql_mode": "llm",
+    "case_set": "all",
+    "query_ids": [
+      "a004"
+    ],
+    "max_cases": null,
+    "repetitions": 1,
+    "use_case_hints": true,
+    "preview_limit": 3,
+    "compare_limit": 10000,
+    "sql_events": "huatai_query_agent\\evaluation\\agent_eval_sql_generation_events_p1p2_a004_smoke7_llm.jsonl"
+  },
+  "llm": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 8192,
+    "timeout_seconds": 60.0
+  },
+  "versions": {
+    "prompt": "2026-07-31-contract-v3",
+    "metadata": "1.0",
+    "python": "3.11.15",
+    "duckdb": "1.5.4",
+    "sqlglot": "30.12.0"
+  },
+  "artifact_hashes": {
+    "schema_catalog": "c04a31cc8ce2dac8",
+    "metrics": "a7801577eb338b8f",
+    "relationships": "1ebf91441f988f94"
+  },
+  "summary": {
+    "total_runs": 1,
+    "agent_completed": 1,
+    "candidate_executable": 1,
+    "semantic_result_match": 0,
+    "strict_exact_match": 0,
+    "llm_calls": 6,
+    "tokens": 77298,
+    "sql_generation_attempts": 3,
+    "sql_generation_elapsed_ms": 621087.8866,
+    "average_sql_generation_attempt_elapsed_ms": 207029.29553333332
+  },
+  "threads": [
+    {
+      "query_id": "a004",
+      "repetition": 1,
+      "thread_id": "eval:p1p2-a004-smoke7-20260731:r1:a004",
+      "model": "deepseek-v4-pro",
+      "sql_generation_attempt_count": 3,
+      "sql_generation_elapsed_ms": 621087.8866,
+      "sql_generation_attempts": [
+        {
+          "attempt": 1,
+          "attempt_type": "initial",
+          "status": "failed",
+          "started_at": "2026-07-31T16:00:44.848989+00:00",
+          "completed_at": "2026-07-31T16:04:46.652190+00:00",
+          "elapsed_ms": 241802.6907,
+          "model": "",
+          "usage": {},
+          "sql": "",
+          "error": "Request timed out.",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "SQL is empty.",
+              "Only SELECT or WITH ... SELECT statements are allowed."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "failed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "join_contract": "passed",
+              "fact_preaggregation": "passed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "passed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        },
+        {
+          "attempt": 2,
+          "attempt_type": "repair",
+          "status": "ok",
+          "started_at": "2026-07-31T16:04:46.707560+00:00",
+          "completed_at": "2026-07-31T16:10:48.629595+00:00",
+          "elapsed_ms": 361921.2494,
+          "model": "deepseek-v4-pro",
+          "usage": {
+            "completion_tokens": 5199,
+            "prompt_tokens": 13292,
+            "total_tokens": 18491,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 4062,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 2048
+            },
+            "prompt_cache_hit_tokens": 2048,
+            "prompt_cache_miss_tokens": 11244
+          },
+          "sql": "WITH cust_base AS (\n  SELECT pty_id, org_id FROM ads_cust_info_d WHERE data_dt = '20260531'\n),\ncust_asset AS (\n  SELECT pty_id, (COALESCE(nm_tot_aset, 0) + COALESCE(fc_pur_aset, 0)) AS total_asset\n  FROM dws_cust_aset_d\n  WHERE data_dt = '20260331'\n),\ncust_tran_agg AS (\n  SELECT pty_id,\n    SUM(COALESCE(buy_amt, 0) + COALESCE(sell_amt, 0)) AS turnover,\n    SUM(COALESCE(buy_rake, 0) + COALESCE(sell_rake, 0) + COALESCE(buy_fare, 0) + COALESCE(sell_fare, 0)) AS total_fee\n  FROM dwd_cust_tran_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\ncust_fin_agg AS (\n  SELECT pty_id,\n    SUM(COALESCE(cash_in, 0) - COALESCE(cash_out, 0)) AS net_inflow\n  FROM dws_cust_fin_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\ncust_hold_agg AS (\n  SELECT pty_id,\n    SUM(COALESCE(mkt_val, 0)) AS holding_market_value\n  FROM dwd_cust_hold_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\ncust_full AS (\n  SELECT\n    cb.pty_id,\n    cb.org_id,\n    COALESCE(ca.total_asset, 0) AS total_asset,\n    COALESCE(ct.turnover, 0) AS turnover,\n    COALESCE(ct.total_fee, 0) AS total_fee,\n    COALESCE(cf.net_inflow, 0) AS net_inflow,\n    COALESCE(ch.holding_market_value, 0) AS holding_market_value,\n    CASE WHEN ct.turnover > 0 THEN 1 ELSE 0 END AS is_active\n  FROM cust_base cb\n  LEFT JOIN cust_asset ca ON cb.pty_id = ca.pty_id\n  LEFT JOIN cust_tran_agg ct ON cb.pty_id = ct.pty_id\n  LEFT JOIN cust_fin_agg cf ON cb.pty_id = cf.pty_id\n  LEFT JOIN cust_hold_agg ch ON cb.pty_id = ch.pty_id\n),\nbranch_metrics AS (\n  SELECT\n    branch.up_org_name,\n    branch.org_name,\n    COUNT(DISTINCT cf.pty_id) AS customer_count,\n    SUM(cf.total_asset) AS total_asset,\n    CAST(SUM(cf.is_active) AS DOUBLE) / NULLIF(COUNT(DISTINCT cf.pty_id), 0) AS active_customer_rate,\n    SUM(cf.turnover) AS turnover,\n    SUM(cf.total_fee) AS total_fee,\n    SUM(cf.net_inflow) AS net_inflow,\n    SUM(cf.holding_market_value) AS holding_market_value\n  FROM cust_full cf\n  INNER JOIN dim_branch branch ON cf.org_id = branch.org_id AND branch.data_dt = '20260531'\n  GROUP BY branch.up_org_name, branch.org_name\n),\nranked AS (\n  SELECT *,\n    DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company\n  FROM branch_metrics\n)\nSELECT\n  up_org_name,\n  org_name,\n  customer_count,\n  total_asset,\n  active_customer_rate,\n  turnover,\n  total_fee,\n  net_inflow,\n  holding_market_value,\n  asset_rank_in_company\nFROM ranked\nWHERE asset_rank_in_company <= 3",
+          "error": "",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "Metric formula mismatch for net_inflow: expected all cash/tran/assign inflow and outflow fields."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "passed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "failed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "join_contract": "passed",
+              "fact_preaggregation": "passed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "passed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        },
+        {
+          "attempt": 3,
+          "attempt_type": "repair",
+          "status": "ok",
+          "started_at": "2026-07-31T16:10:48.701860+00:00",
+          "completed_at": "2026-07-31T16:11:06.068520+00:00",
+          "elapsed_ms": 17363.9465,
+          "model": "deepseek-v4-pro",
+          "usage": {
+            "completion_tokens": 1840,
+            "prompt_tokens": 14436,
+            "total_tokens": 16276,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 664,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 9984
+            },
+            "prompt_cache_hit_tokens": 9984,
+            "prompt_cache_miss_tokens": 4452
+          },
+          "sql": "WITH cust_base AS (\n  SELECT pty_id, org_id FROM ads_cust_info_d WHERE data_dt = '20260531'\n),\ncust_asset AS (\n  SELECT pty_id, (COALESCE(nm_tot_aset, 0) + COALESCE(fc_pur_aset, 0)) AS total_asset\n  FROM dws_cust_aset_d\n  WHERE data_dt = '20260331'\n),\ncust_tran_agg AS (\n  SELECT pty_id,\n    SUM(COALESCE(buy_amt, 0) + COALESCE(sell_amt, 0)) AS turnover,\n    SUM(COALESCE(buy_rake, 0) + COALESCE(sell_rake, 0) + COALESCE(buy_fare, 0) + COALESCE(sell_fare, 0)) AS total_fee\n  FROM dwd_cust_tran_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\ncust_fin_agg AS (\n  SELECT pty_id,\n    SUM(COALESCE(cash_in, 0) - COALESCE(cash_out, 0) + COALESCE(tran_in, 0) - COALESCE(tran_out, 0) + COALESCE(assign_in, 0) - COALESCE(assign_out, 0)) AS net_inflow\n  FROM dws_cust_fin_d\n  WHERE data_dt BETWEEN '20260101' AND '20260331'\n  GROUP BY pty_id\n),\ncust_hold_agg AS (\n  SELECT pty_id,\n    SUM(COALESCE(mkt_val, 0)) AS holding_market_value\n  FROM dwd_cust_hold_d\n  WHERE data_dt = '20260331'\n  GROUP BY pty_id\n),\ncust_full AS (\n  SELECT\n    cb.pty_id,\n    cb.org_id,\n    COALESCE(ca.total_asset, 0) AS total_asset,\n    COALESCE(ct.turnover, 0) AS turnover,\n    COALESCE(ct.total_fee, 0) AS total_fee,\n    COALESCE(cf.net_inflow, 0) AS net_inflow,\n    COALESCE(ch.holding_market_value, 0) AS holding_market_value,\n    CASE WHEN ct.turnover > 0 THEN 1 ELSE 0 END AS is_active\n  FROM cust_base cb\n  LEFT JOIN cust_asset ca ON cb.pty_id = ca.pty_id\n  LEFT JOIN cust_tran_agg ct ON cb.pty_id = ct.pty_id\n  LEFT JOIN cust_fin_agg cf ON cb.pty_id = cf.pty_id\n  LEFT JOIN cust_hold_agg ch ON cb.pty_id = ch.pty_id\n),\nbranch_metrics AS (\n  SELECT\n    branch.up_org_name,\n    branch.org_name,\n    COUNT(DISTINCT cf.pty_id) AS customer_count,\n    SUM(cf.total_asset) AS total_asset,\n    CAST(SUM(cf.is_active) AS DOUBLE) / NULLIF(COUNT(DISTINCT cf.pty_id), 0) AS active_customer_rate,\n    SUM(cf.turnover) AS turnover,\n    SUM(cf.total_fee) AS total_fee,\n    SUM(cf.net_inflow) AS net_inflow,\n    SUM(cf.holding_market_value) AS holding_market_value\n  FROM cust_full cf\n  INNER JOIN dim_branch branch ON cf.org_id = branch.org_id AND branch.data_dt = '20260531'\n  GROUP BY branch.up_org_name, branch.org_name\n),\nranked AS (\n  SELECT *,\n    DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company\n  FROM branch_metrics\n)\nSELECT\n  up_org_name,\n  org_name,\n  customer_count,\n  total_asset,\n  active_customer_rate,\n  turnover,\n  total_fee,\n  net_inflow,\n  holding_market_value,\n  asset_rank_in_company\nFROM ranked\nWHERE asset_rank_in_company <= 3",
+          "error": "",
+          "validation": {
+            "passed": true,
+            "errors": [],
+            "warnings": [],
+            "checks": {
+              "readonly": "passed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "join_contract": "passed",
+              "fact_preaggregation": "passed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "passed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        }
+      ],
+      "sql_plan": {
+        "target": "营业部经营对比表",
+        "tables": [
+          "ads_cust_info_d",
+          "dim_branch",
+          "dws_cust_aset_d",
+          "dwd_cust_tran_d",
+          "dws_cust_fin_d",
+          "dwd_cust_hold_d"
+        ],
+        "joins": [
+          "ads_cust_info_d (cust) LEFT JOIN dim_branch (branch) ON cust.org_id = branch.org_id AND branch.data_dt = '20260531'  -- 获取分公司和营业部名称",
+          "cust LEFT JOIN dws_cust_aset_d (aset) ON cust.pty_id = aset.pty_id AND aset.data_dt = '20260331'  -- 期末总资产",
+          "cust LEFT JOIN dwd_cust_tran_d (tran) ON cust.pty_id = tran.pty_id AND tran.data_dt BETWEEN '20260101' AND '20260331'  -- 一季度交易",
+          "cust LEFT JOIN dws_cust_fin_d (fin) ON cust.pty_id = fin.pty_id AND fin.data_dt BETWEEN '20260101' AND '20260331'  -- 一季度资金流动",
+          "cust LEFT JOIN dwd_cust_hold_d (hold) ON cust.pty_id = hold.pty_id AND hold.data_dt = '20260331'  -- 期末持仓"
+        ],
+        "filters": [
+          "ads_cust_info_d.data_dt = '20260531'"
+        ],
+        "metrics": [
+          "customer_count: COUNT(DISTINCT cust.pty_id) per branch",
+          "total_asset: SUM(COALESCE(aset.nm_tot_aset, 0) + COALESCE(aset.fc_pur_aset, 0))",
+          "active_customer_rate: (活跃客户数) / (总客户数). 活跃客户数定义为在20260101-20260331期间 SUM(COALESCE(tran.buy_amt,0)+COALESCE(tran.sell_amt,0)) > 0 的不同pty_id数量",
+          "turnover: SUM(COALESCE(tran.buy_amt, 0) + COALESCE(tran.sell_amt, 0))",
+          "total_fee: SUM(COALESCE(tran.buy_rake, 0) + COALESCE(tran.sell_rake, 0) + COALESCE(tran.buy_fare, 0) + COALESCE(tran.sell_fare, 0))",
+          "net_inflow: SUM(COALESCE(fin.cash_in, 0) - COALESCE(fin.cash_out, 0))",
+          "holding_market_value: SUM(COALESCE(hold.mkt_val, 0))"
+        ],
+        "population": "2026年5月31日归属的营业部全部客户，取自 ads_cust_info_d WHERE data_dt='20260531'",
+        "grain": [
+          "分公司 (up_org_name)",
+          "营业部 (org_name)"
+        ],
+        "output_columns": [
+          {
+            "name": "up_org_name",
+            "alias": "up_org_name",
+            "semantic_type": "up_org_name",
+            "required": true,
+            "position": 1,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "org_name",
+            "alias": "org_name",
+            "semantic_type": "org_name",
+            "required": true,
+            "position": 2,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "customer_count",
+            "alias": "customer_count",
+            "semantic_type": "customer_count",
+            "required": true,
+            "position": 3,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "total_asset",
+            "alias": "total_asset",
+            "semantic_type": "total_asset",
+            "required": true,
+            "position": 4,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "active_customer_rate",
+            "alias": "active_customer_rate",
+            "semantic_type": "active_customer_rate",
+            "required": true,
+            "position": 5,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-07,
+              "rtol": 1e-06
+            }
+          },
+          {
+            "name": "turnover",
+            "alias": "turnover",
+            "semantic_type": "turnover",
+            "required": true,
+            "position": 6,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "total_fee",
+            "alias": "total_fee",
+            "semantic_type": "total_fee",
+            "required": true,
+            "position": 7,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "net_inflow",
+            "alias": "net_inflow",
+            "semantic_type": "net_inflow",
+            "required": true,
+            "position": 8,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "holding_market_value",
+            "alias": "holding_market_value",
+            "semantic_type": "holding_market_value",
+            "required": true,
+            "position": 9,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "asset_rank_in_company",
+            "alias": "asset_rank_in_company",
+            "semantic_type": "asset_rank_in_company",
+            "required": true,
+            "position": 10,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          }
+        ],
+        "group_by": [
+          "branch.up_org_name",
+          "branch.org_name",
+          "cust.org_id"
+        ],
+        "eligibility_filters": [],
+        "snapshot_policy": {
+          "客户归属": "20260531",
+          "期末资产和持仓": "2026年3月31日",
+          "期末资产": "20260331",
+          "期末持仓": "20260331",
+          "ads_cust_info_d": "20260531",
+          "dim_branch": "20260531",
+          "dws_cust_aset_d": "20260331",
+          "dwd_cust_hold_d": "20260331",
+          "dwd_cust_tran_d": "20260101 to 20260331",
+          "dws_cust_fin_d": "20260101 to 20260331"
+        },
+        "missing_fact_policy": {
+          "交易记录": "zero_fill_after_aggregation",
+          "资金记录": "zero_fill_after_aggregation",
+          "资产记录": "zero_fill_after_aggregation",
+          "持仓记录": "zero_fill_after_aggregation"
+        },
+        "dictionary_translation": [],
+        "window": [
+          {
+            "function": "dense_rank",
+            "partition_by": [
+              "up_org_name"
+            ],
+            "order_by": [
+              {
+                "expression": "total_asset",
+                "direction": "desc"
+              }
+            ],
+            "tie_breaker": []
+          }
+        ],
+        "order_by": [],
+        "top_n": 3,
+        "expect_nonempty": true,
+        "join_contract": [
+          {
+            "table": "dim_branch",
+            "join_type": "inner"
+          }
+        ],
+        "calculation_notes": [
+          "营业部客户数以客户快照为母集；交易、资金数据缺失按0。",
+          "活跃客户率为一季度交易额大于0的客户数除以营业部客户数。",
+          "在各分公司内部按期末总资产排名。"
+        ],
+        "strategy": "llm_text_to_sql",
+        "matched_query_id": null
+      }
+    }
+  ]
+}

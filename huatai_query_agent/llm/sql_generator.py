@@ -27,6 +27,9 @@ class GeneratedSql:
     model: str = ""
     usage: dict[str, Any] = field(default_factory=dict)
     raw_content: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    elapsed_ms: float = 0.0
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -37,6 +40,9 @@ class GeneratedSql:
             "referenced_context_ids": self.referenced_context_ids,
             "model": self.model,
             "usage": self.usage,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "elapsed_ms": self.elapsed_ms,
         }
 
 
@@ -47,6 +53,9 @@ class StructuredLlmOutput:
     model: str = ""
     usage: dict[str, Any] = field(default_factory=dict)
     raw_content: str = ""
+    started_at: str = ""
+    completed_at: str = ""
+    elapsed_ms: float = 0.0
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -54,6 +63,9 @@ class StructuredLlmOutput:
             "confidence": self.confidence,
             "model": self.model,
             "usage": self.usage,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+            "elapsed_ms": self.elapsed_ms,
         }
 
 
@@ -128,6 +140,7 @@ class TextToSqlGenerator:
         previous_sql: str,
         validation_report: dict[str, Any],
         execution_result: dict[str, Any],
+        result_check: dict[str, Any] | None = None,
     ) -> GeneratedSql:
         messages = build_sql_repair_messages(
             question=question,
@@ -137,6 +150,7 @@ class TextToSqlGenerator:
             previous_sql=previous_sql,
             validation_report=validation_report,
             execution_result=execution_result,
+            result_check=result_check,
         )
         result = self.client.chat_json(messages)
         return _parse_generated_sql(result)
@@ -182,6 +196,9 @@ def _parse_generated_sql(result: ChatCompletionResult) -> GeneratedSql:
         model=result.model,
         usage=result.usage,
         raw_content=result.content,
+        started_at=result.started_at,
+        completed_at=result.completed_at,
+        elapsed_ms=result.elapsed_ms,
     )
 
 
@@ -199,17 +216,25 @@ def _parse_structured_output(result: ChatCompletionResult) -> StructuredLlmOutpu
         model=result.model,
         usage=result.usage,
         raw_content=result.content,
+        started_at=result.started_at,
+        completed_at=result.completed_at,
+        elapsed_ms=result.elapsed_ms,
     )
 
 
 def _loads_json_object(content: str) -> dict[str, Any]:
     try:
         payload = json.loads(content)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as initial_error:
         match = re.search(r"\{.*\}", content, flags=re.DOTALL)
         if not match:
-            raise LlmClientError("LLM response is not a JSON object.")
-        payload = json.loads(match.group(0))
+            raise LlmClientError("LLM response is not a JSON object.") from initial_error
+        try:
+            payload = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise LlmClientError(
+                f"LLM response contains invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}"
+            ) from exc
     if not isinstance(payload, dict):
         raise LlmClientError("LLM JSON response is not an object.")
     return payload

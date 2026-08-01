@@ -78,4 +78,20 @@ GUARDRAIL_CASES = [
         expected_pass=False,
         expected_error_keywords=["Only SELECT", "forbidden keyword"],
     ),
+    GuardrailCase(
+        case_id="g009_unknown_unqualified_column",
+        category="field_hallucination",
+        description="未带表别名的编造字段也必须被拦截",
+        sql="select fake_col from ads_cust_info_d",
+        expected_pass=False,
+        expected_error_keywords=["unknown columns"],
+    ),
+    GuardrailCase(
+        case_id="g010_wrong_total_asset_formula",
+        category="metric_formula",
+        description="总资产口径漏掉信用账户净资产时必须被拦截",
+        sql="select sum(coalesce(nm_tot_aset, 0)) as total_asset from dws_cust_aset_d",
+        expected_pass=False,
+        expected_error_keywords=["Metric formula mismatch", "total_asset"],
+    ),
 ]

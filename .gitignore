@@ -14,6 +14,7 @@ __pycache__/
 huatai_query_agent/data/*.duckdb
 huatai_query_agent/vectorstore/
 huatai_query_agent/runtime/
+huatai_query_agent/retrieval/models/
 
 # Raw competition files and local binary exports
 原始文件/

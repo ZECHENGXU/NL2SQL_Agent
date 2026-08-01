@@ -5,7 +5,7 @@
 - Executable rate: 7/7 (100.00%)
 - Exact result match rate: 7/7 (100.00%)
 - Row count match rate: 7/7 (100.00%)
-- Average execution elapsed: 28.12 ms
+- Average execution elapsed: 32.84 ms
 - LLM calls: 0
 - LLM total tokens: 0
 

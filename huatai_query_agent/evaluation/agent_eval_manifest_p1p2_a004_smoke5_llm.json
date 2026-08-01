@@ -1,0 +1,476 @@
+{
+  "schema_version": "2.0",
+  "created_at": "2026-07-31T15:14:33.158285+00:00",
+  "run_id": "p1p2-a004-smoke5-20260731",
+  "configuration": {
+    "sql_mode": "llm",
+    "case_set": "all",
+    "query_ids": [
+      "a004"
+    ],
+    "max_cases": null,
+    "repetitions": 1,
+    "use_case_hints": true,
+    "preview_limit": 3,
+    "compare_limit": 10000,
+    "sql_events": "huatai_query_agent\\evaluation\\agent_eval_sql_generation_events_p1p2_a004_smoke5_llm.jsonl"
+  },
+  "llm": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 8192,
+    "timeout_seconds": 60.0
+  },
+  "versions": {
+    "prompt": "2026-07-31-contract-v3",
+    "metadata": "1.0",
+    "python": "3.11.15",
+    "duckdb": "1.5.4",
+    "sqlglot": "30.12.0"
+  },
+  "artifact_hashes": {
+    "schema_catalog": "c04a31cc8ce2dac8",
+    "metrics": "a7801577eb338b8f",
+    "relationships": "1ebf91441f988f94"
+  },
+  "summary": {
+    "total_runs": 1,
+    "agent_completed": 0,
+    "candidate_executable": 1,
+    "semantic_result_match": 0,
+    "strict_exact_match": 0,
+    "llm_calls": 6,
+    "tokens": 100128,
+    "sql_generation_attempts": 3,
+    "sql_generation_elapsed_ms": 219783.078,
+    "average_sql_generation_attempt_elapsed_ms": 73261.026
+  },
+  "threads": [
+    {
+      "query_id": "a004",
+      "repetition": 1,
+      "thread_id": "eval:p1p2-a004-smoke5-20260731:r1:a004",
+      "model": "deepseek-v4-pro",
+      "sql_generation_attempt_count": 3,
+      "sql_generation_elapsed_ms": 219783.078,
+      "sql_generation_attempts": [
+        {
+          "attempt": 1,
+          "attempt_type": "initial",
+          "status": "ok",
+          "started_at": "2026-07-31T15:10:34.340489+00:00",
+          "completed_at": "2026-07-31T15:11:13.037200+00:00",
+          "elapsed_ms": 38692.8168,
+          "model": "deepseek-v4-pro",
+          "usage": {
+            "completion_tokens": 2993,
+            "prompt_tokens": 13782,
+            "total_tokens": 16775,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 1899,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1920
+            },
+            "prompt_cache_hit_tokens": 1920,
+            "prompt_cache_miss_tokens": 11862
+          },
+          "sql": "WITH cust_base AS (\n    SELECT c.pty_id, c.org_id, b.up_org_name, b.org_name\n    FROM ads_cust_info_d c\n    INNER JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531'\n    WHERE c.data_dt = '20260531'\n),\nasset_eop AS (\n    SELECT pty_id,\n           COALESCE(nm_tot_aset, 0) + COALESCE(fc_pur_aset, 0) AS total_asset\n    FROM dws_cust_aset_d\n    WHERE data_dt = '20260331'\n),\ntrade_q1 AS (\n    SELECT pty_id,\n           SUM(COALESCE(buy_amt, 0) + COALESCE(sell_amt, 0)) AS turnover,\n           SUM(COALESCE(buy_rake, 0) + COALESCE(buy_fare, 0) + COALESCE(sell_rake, 0) + COALESCE(sell_fare, 0)) AS total_fee\n    FROM dwd_cust_tran_d\n    WHERE data_dt BETWEEN '20260101' AND '20260331'\n    GROUP BY pty_id\n),\nfin_q1 AS (\n    SELECT pty_id,\n           SUM(COALESCE(cash_in, 0) - COALESCE(cash_out, 0)) AS net_inflow\n    FROM dws_cust_fin_d\n    WHERE data_dt BETWEEN '20260101' AND '20260331'\n    GROUP BY pty_id\n),\nhold_eop AS (\n    SELECT pty_id,\n           SUM(COALESCE(mkt_val, 0)) AS holding_market_value\n    FROM dwd_cust_hold_d\n    WHERE data_dt = '20260331'\n    GROUP BY pty_id\n),\nbranch_agg AS (\n    SELECT\n        cb.up_org_name,\n        cb.org_name,\n        COUNT(cb.pty_id) AS customer_count,\n        COALESCE(SUM(a.total_asset), 0) AS total_asset,\n        1.0 * SUM(CASE WHEN COALESCE(t.turnover, 0) > 0 THEN 1 ELSE 0 END) / COUNT(cb.pty_id) AS active_customer_rate,\n        COALESCE(SUM(t.turnover), 0) AS turnover,\n        COALESCE(SUM(t.total_fee), 0) AS total_fee,\n        COALESCE(SUM(f.net_inflow), 0) AS net_inflow,\n        COALESCE(SUM(h.holding_market_value), 0) AS holding_market_value\n    FROM cust_base cb\n    LEFT JOIN asset_eop a ON cb.pty_id = a.pty_id\n    LEFT JOIN trade_q1 t ON cb.pty_id = t.pty_id\n    LEFT JOIN fin_q1 f ON cb.pty_id = f.pty_id\n    LEFT JOIN hold_eop h ON cb.pty_id = h.pty_id\n    GROUP BY cb.up_org_name, cb.org_name\n),\nranked AS (\n    SELECT *,\n           DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company\n    FROM branch_agg\n)\nSELECT up_org_name, org_name, customer_count, total_asset, active_customer_rate, turnover, total_fee, net_inflow, holding_market_value, asset_rank_in_company\nFROM ranked\nWHERE asset_rank_in_company <= 3\nORDER BY up_org_name ASC, asset_rank_in_company ASC",
+          "error": "",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "Join contract requires LEFT JOIN asset, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN trade, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN flow, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN holding, but SQL uses ['no physical join'].",
+              "Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "passed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "join_contract": "failed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "failed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        },
+        {
+          "attempt": 2,
+          "attempt_type": "repair",
+          "status": "ok",
+          "started_at": "2026-07-31T15:11:13.117980+00:00",
+          "completed_at": "2026-07-31T15:12:07.203471+00:00",
+          "elapsed_ms": 54084.7298,
+          "model": "deepseek-v4-pro",
+          "usage": {
+            "completion_tokens": 3501,
+            "prompt_tokens": 15125,
+            "total_tokens": 18626,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 2579,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 1920
+            },
+            "prompt_cache_hit_tokens": 1920,
+            "prompt_cache_miss_tokens": 13205
+          },
+          "sql": "SELECT up_org_name, org_name, customer_count, total_asset, active_customer_rate, turnover, total_fee, net_inflow, holding_market_value, asset_rank_in_company FROM ( SELECT up_org_name, org_name, customer_count, total_asset, active_customer_rate, turnover, total_fee, net_inflow, holding_market_value, DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company FROM ( SELECT cb.up_org_name, cb.org_name, COUNT(cb.pty_id) AS customer_count, COALESCE(SUM(asset.total_asset), 0) AS total_asset, 1.0 * SUM(CASE WHEN COALESCE(trade.turnover, 0) > 0 THEN 1 ELSE 0 END) / COUNT(cb.pty_id) AS active_customer_rate, COALESCE(SUM(trade.turnover), 0) AS turnover, COALESCE(SUM(trade.total_fee), 0) AS total_fee, COALESCE(SUM(flow.net_inflow), 0) AS net_inflow, COALESCE(SUM(holding.holding_market_value), 0) AS holding_market_value FROM ( SELECT c.pty_id, c.org_id, b.up_org_name, b.org_name FROM ads_cust_info_d c INNER JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531' WHERE c.data_dt = '20260531' ) AS cb LEFT JOIN ( SELECT pty_id, COALESCE(nm_tot_aset, 0) + COALESCE(fc_pur_aset, 0) AS total_asset FROM dws_cust_aset_d WHERE data_dt = '20260331' ) AS asset ON cb.pty_id = asset.pty_id LEFT JOIN ( SELECT pty_id, SUM(COALESCE(buy_amt, 0) + COALESCE(sell_amt, 0)) AS turnover, SUM(COALESCE(buy_rake, 0) + COALESCE(buy_fare, 0) + COALESCE(sell_rake, 0) + COALESCE(sell_fare, 0)) AS total_fee FROM dwd_cust_tran_d WHERE data_dt BETWEEN '20260101' AND '20260331' GROUP BY pty_id ) AS trade ON cb.pty_id = trade.pty_id LEFT JOIN ( SELECT pty_id, SUM(COALESCE(cash_in, 0) - COALESCE(cash_out, 0)) AS net_inflow FROM dws_cust_fin_d WHERE data_dt BETWEEN '20260101' AND '20260331' GROUP BY pty_id ) AS flow ON cb.pty_id = flow.pty_id LEFT JOIN ( SELECT pty_id, SUM(COALESCE(mkt_val, 0)) AS holding_market_value FROM dwd_cust_hold_d WHERE data_dt = '20260331' GROUP BY pty_id ) AS holding ON cb.pty_id = holding.pty_id GROUP BY cb.up_org_name, cb.org_name ) AS branch_agg ) AS ranked WHERE asset_rank_in_company <= 3 ORDER BY up_org_name ASC, asset_rank_in_company ASC",
+          "error": "",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "Join contract requires LEFT JOIN asset, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN trade, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN flow, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN holding, but SQL uses ['no physical join'].",
+              "Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "passed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "join_contract": "failed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "failed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        },
+        {
+          "attempt": 3,
+          "attempt_type": "repair",
+          "status": "ok",
+          "started_at": "2026-07-31T15:12:07.270913+00:00",
+          "completed_at": "2026-07-31T15:14:14.279926+00:00",
+          "elapsed_ms": 127005.5314,
+          "model": "deepseek-v4-pro",
+          "usage": {
+            "completion_tokens": 7635,
+            "prompt_tokens": 15028,
+            "total_tokens": 22663,
+            "completion_tokens_details": {
+              "accepted_prediction_tokens": null,
+              "audio_tokens": null,
+              "reasoning_tokens": 6757,
+              "rejected_prediction_tokens": null
+            },
+            "prompt_tokens_details": {
+              "audio_tokens": null,
+              "cache_write_tokens": null,
+              "cached_tokens": 5632
+            },
+            "prompt_cache_hit_tokens": 5632,
+            "prompt_cache_miss_tokens": 9396
+          },
+          "sql": "SELECT up_org_name, org_name, customer_count, total_asset, active_customer_rate, turnover, total_fee, net_inflow, holding_market_value, asset_rank_in_company FROM ( SELECT up_org_name, org_name, customer_count, total_asset, active_customer_rate, turnover, total_fee, net_inflow, holding_market_value, DENSE_RANK() OVER (PARTITION BY up_org_name ORDER BY total_asset DESC) AS asset_rank_in_company FROM ( SELECT b.up_org_name, b.org_name, COUNT(DISTINCT c.pty_id) AS customer_count, COALESCE(SUM(COALESCE(a.nm_tot_aset,0) + COALESCE(a.fc_pur_aset,0)), 0) AS total_asset, COUNT(DISTINCT CASE WHEN COALESCE(t.buy_amt,0) + COALESCE(t.sell_amt,0) > 0 THEN c.pty_id END) * 1.0 / COUNT(DISTINCT c.pty_id) AS active_customer_rate, COALESCE(SUM(COALESCE(t.buy_amt,0) + COALESCE(t.sell_amt,0)), 0) AS turnover, COALESCE(SUM(COALESCE(t.buy_rake,0) + COALESCE(t.buy_fare,0) + COALESCE(t.sell_rake,0) + COALESCE(t.sell_fare,0)), 0) AS total_fee, COALESCE(SUM(COALESCE(f.cash_in,0) - COALESCE(f.cash_out,0)), 0) AS net_inflow, COALESCE(SUM(COALESCE(h.mkt_val,0)), 0) AS holding_market_value FROM ads_cust_info_d c INNER JOIN dim_branch b ON c.org_id = b.org_id AND b.data_dt = '20260531' LEFT JOIN dws_cust_aset_d a ON c.pty_id = a.pty_id AND a.data_dt = '20260331' LEFT JOIN dwd_cust_tran_d t ON c.pty_id = t.pty_id AND t.data_dt BETWEEN '20260101' AND '20260331' LEFT JOIN dws_cust_fin_d f ON c.pty_id = f.pty_id AND f.data_dt BETWEEN '20260101' AND '20260331' LEFT JOIN dwd_cust_hold_d h ON c.pty_id = h.pty_id AND h.data_dt = '20260331' WHERE c.data_dt = '20260531' GROUP BY b.up_org_name, b.org_name ) AS branch_agg ) AS ranked WHERE asset_rank_in_company <= 3 ORDER BY up_org_name ASC, asset_rank_in_company ASC",
+          "error": "",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "Join contract requires LEFT JOIN asset, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN trade, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN flow, but SQL uses ['no physical join'].",
+              "Join contract requires LEFT JOIN holding, but SQL uses ['no physical join'].",
+              "Missing period policy is zero_fill, but SQL has no period scaffold or full-outer zero-fill strategy."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "passed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "join_contract": "failed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "failed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        }
+      ],
+      "sql_plan": {
+        "target": "营业部经营对比表，显示每个分公司内按期末总资产排名前三的营业部，包含客户数、期末总资产、活跃客户率、买卖交易额、佣金及费用合计、资金净流入、期末持仓市值",
+        "tables": [
+          "ads_cust_info_d",
+          "dim_branch",
+          "dws_cust_aset_d",
+          "dws_cust_fin_d",
+          "dwd_cust_tran_d",
+          "dwd_cust_hold_d"
+        ],
+        "joins": [
+          "客户母集：ads_cust_info_d 快照 20260531",
+          "左连接 dim_branch on org_id and branch.data_dt='20260531' 获取分公司/营业部名称",
+          "左连接 dws_cust_aset_d on pty_id and asset.data_dt='20260331' 获取期末总资产",
+          "客户级交易汇总（一季度）：dwd_cust_tran_d group by pty_id, sum(turnover, fee) -> cust_trade，左连接客户母集",
+          "客户级资金汇总（一季度）：dws_cust_fin_d group by pty_id, sum(net_inflow) -> cust_fin，左连接客户母集",
+          "客户级持仓汇总（期末）：dwd_cust_hold_d group by pty_id, sum(mkt_val) -> cust_hold，左连接客户母集"
+        ],
+        "filters": [
+          "ads_cust_info_d.data_dt = '20260531'",
+          "dim_branch.data_dt = '20260531'",
+          "dws_cust_aset_d.data_dt = '20260331'",
+          "交易、资金区间数据：'20260101' <= data_dt <= '20260331'",
+          "无产品、客户状态等额外筛选"
+        ],
+        "metrics": [
+          "customer_count = count(c.pty_id)",
+          "total_asset = sum(coalesce(a.nm_tot_aset,0) + coalesce(a.fc_pur_aset,0))",
+          "active_customer_rate = 1.0 * sum(case when t.turnover > 0 then 1 else 0 end) / count(c.pty_id)",
+          "turnover = sum(coalesce(t.turnover,0))",
+          "total_fee = sum(coalesce(t.total_fee,0))",
+          "net_inflow = sum(coalesce(f.net_inflow,0))",
+          "holding_market_value = sum(coalesce(h.total_hold_mv,0))",
+          "asset_rank_in_company = dense_rank() over (partition by b.up_org_name order by sum(coalesce(a.nm_tot_aset,0) + coalesce(a.fc_pur_aset,0)) desc)"
+        ],
+        "population": "以2026年5月31日客户归属为准的营业部全部客户（ads_cust_info_d.data_dt='20260531'）",
+        "grain": [
+          "up_org_name",
+          "org_name"
+        ],
+        "output_columns": [
+          {
+            "name": "up_org_name",
+            "alias": "up_org_name",
+            "semantic_type": "up_org_name",
+            "required": true,
+            "position": 1,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "org_name",
+            "alias": "org_name",
+            "semantic_type": "org_name",
+            "required": true,
+            "position": 2,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "customer_count",
+            "alias": "customer_count",
+            "semantic_type": "customer_count",
+            "required": true,
+            "position": 3,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "total_asset",
+            "alias": "total_asset",
+            "semantic_type": "total_asset",
+            "required": true,
+            "position": 4,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "active_customer_rate",
+            "alias": "active_customer_rate",
+            "semantic_type": "active_customer_rate",
+            "required": true,
+            "position": 5,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-07,
+              "rtol": 1e-06
+            }
+          },
+          {
+            "name": "turnover",
+            "alias": "turnover",
+            "semantic_type": "turnover",
+            "required": true,
+            "position": 6,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "total_fee",
+            "alias": "total_fee",
+            "semantic_type": "total_fee",
+            "required": true,
+            "position": 7,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "net_inflow",
+            "alias": "net_inflow",
+            "semantic_type": "net_inflow",
+            "required": true,
+            "position": 8,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "holding_market_value",
+            "alias": "holding_market_value",
+            "semantic_type": "holding_market_value",
+            "required": true,
+            "position": 9,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          },
+          {
+            "name": "asset_rank_in_company",
+            "alias": "asset_rank_in_company",
+            "semantic_type": "asset_rank_in_company",
+            "required": true,
+            "position": 10,
+            "alias_strict": false,
+            "numeric_tolerance": {
+              "atol": 1e-08,
+              "rtol": 1e-09
+            }
+          }
+        ],
+        "group_by": [
+          "up_org_name",
+          "org_name"
+        ],
+        "eligibility_filters": [],
+        "snapshot_policy": {
+          "客户归属": "20260531",
+          "期末总资产": "20260331",
+          "期末持仓市值": "20260331",
+          "ads_cust_info_d": "20260531",
+          "dim_branch": "20260531",
+          "dws_cust_aset_d": "20260331",
+          "dwd_cust_hold_d": "20260331",
+          "dwd_cust_tran_d": "20260101-20260331",
+          "dws_cust_fin_d": "20260101-20260331"
+        },
+        "missing_fact_policy": {
+          "turnover": "zero_fill",
+          "total_fee": "zero_fill",
+          "net_inflow": "zero_fill",
+          "holding_market_value": "zero_fill",
+          "total_asset": "zero_fill"
+        },
+        "missing_period_policy": "zero_fill",
+        "dictionary_translation": [],
+        "window": [
+          {
+            "function": "dense_rank",
+            "partition_by": [
+              "up_org_name"
+            ],
+            "order_by": [
+              {
+                "expression": "total_asset",
+                "direction": "desc"
+              }
+            ],
+            "tie_breaker": []
+          }
+        ],
+        "order_by": [
+          {
+            "expression": "up_org_name",
+            "direction": "asc",
+            "nulls": "last"
+          },
+          {
+            "expression": "asset_rank_in_company",
+            "direction": "asc",
+            "nulls": "last"
+          }
+        ],
+        "top_n": 3,
+        "expect_nonempty": true,
+        "join_contract": [
+          {
+            "table": "dim_branch",
+            "join_type": "inner"
+          },
+          {
+            "table": "asset",
+            "join_type": "left"
+          },
+          {
+            "table": "trade",
+            "join_type": "left"
+          },
+          {
+            "table": "flow",
+            "join_type": "left"
+          },
+          {
+            "table": "holding",
+            "join_type": "left"
+          }
+        ],
+        "calculation_notes": [
+          "营业部客户数以客户快照为母集；交易、资金数据缺失按0。",
+          "活跃客户率为一季度交易额大于0的客户数除以营业部客户数。",
+          "在各分公司内部按期末总资产排名。"
+        ],
+        "strategy": "llm_text_to_sql",
+        "matched_query_id": null
+      }
+    }
+  ]
+}

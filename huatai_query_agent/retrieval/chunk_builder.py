@@ -5,7 +5,6 @@ from typing import Any
 
 import yaml
 
-from huatai_query_agent.agent.demo_cases import DemoCaseRepository
 from huatai_query_agent.retrieval.types import MetadataChunk
 
 
@@ -31,7 +30,6 @@ class MetadataChunkBuilder:
         chunks.extend(self._build_term_chunks())
         chunks.extend(self._build_metric_chunks())
         chunks.extend(self._build_relationship_chunks())
-        chunks.extend(self._build_example_chunks())
         return chunks
 
     def _build_schema_chunks(self) -> list[MetadataChunk]:
@@ -259,34 +257,5 @@ class MetadataChunkBuilder:
             )
         return chunks
 
-    def _build_example_chunks(self) -> list[MetadataChunk]:
-        repo = DemoCaseRepository(examples_path=self.metadata_dir / "query_examples.yaml")
-        chunks: list[MetadataChunk] = []
-        for case in repo.list_cases():
-            filters = _stringify_list(case.intent.get("filters", []))
-            dimensions = _stringify_list(case.intent.get("dimensions", []))
-            text = (
-                f"样例SQL {case.query_id}，问题：{case.question}，场景：{case.scenario}，"
-                f"目标：{case.intent.get('target')}，维度：{dimensions}，筛选：{filters}，"
-                f"涉及表：{_stringify_list(case.required_tables)}，指标：{_stringify_list(case.expected_metrics)}。"
-            )
-            chunks.append(
-                MetadataChunk(
-                    id=f"example_sql.{case.query_id}",
-                    chunk_type="example_sql",
-                    text=text,
-                    metadata={
-                        "source_file": "query_examples.yaml",
-                        "question_id": case.query_id,
-                        "scenario": case.scenario,
-                        "required_tables": case.required_tables,
-                        "expected_metrics": case.expected_metrics,
-                    },
-                )
-            )
-        return chunks
-
-
 def build_metadata_chunks() -> list[MetadataChunk]:
     return MetadataChunkBuilder().build_chunks()
-

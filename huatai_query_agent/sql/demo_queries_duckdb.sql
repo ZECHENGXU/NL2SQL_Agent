@@ -115,6 +115,7 @@ select
 from ads_cust_info_d cust
 inner join dim_branch branch
   on cust.org_id = branch.org_id
+ and branch.data_dt = '20260531'
 where cust.data_dt = '20260531'
 group by
     branch.up_org_name,
@@ -227,6 +228,7 @@ inner join ads_cust_info_d cust
  and cust.data_dt = '20260531'
 left join dim_branch branch
   on cust.org_id = branch.org_id
+ and branch.data_dt = '20260531'
 group by
     branch.up_org_name,
     branch.org_name

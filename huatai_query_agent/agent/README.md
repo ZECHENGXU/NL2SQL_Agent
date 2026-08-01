@@ -103,6 +103,5 @@ HUATAI_LLM_MAX_TOKENS=4096
 Upgrade the current M4 prototype into a broader evaluation version:
 
 1. Replace hashing vectors with a local semantic embedding API.
-2. Add metric-level SQL rule validation beyond table and qualified field whitelist checks.
-3. Add evaluation cases beyond the 7 official examples.
-4. Add UI panels for node trace, retrieved context, SQL guardrail results, and repair history.
+2. Add evaluation cases beyond the 7 official examples.
+3. Run and archive full LLM-mode evaluation against an approved local model gateway.

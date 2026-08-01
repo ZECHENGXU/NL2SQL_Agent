@@ -5,8 +5,9 @@ from typing import Any, Callable
 
 from huatai_query_agent.agent.demo_cases import DemoCaseRepository
 from huatai_query_agent.agent.nodes import m1_nodes
-from huatai_query_agent.agent.state import AgentState, new_agent_state
+from huatai_query_agent.agent.state import AgentState, add_trace, new_agent_state
 from huatai_query_agent.executors.duckdb_executor import DuckDBExecutor
+from huatai_query_agent.llm.client import case_deadline
 from huatai_query_agent.llm.sql_generator import TextToSqlGenerator
 from huatai_query_agent.retrieval.hybrid_retriever import HybridMetadataRetriever
 
@@ -31,15 +32,23 @@ def _merge(state: AgentState, update: dict[str, Any]) -> AgentState:
 
 
 def route_after_slot_check(state: AgentState) -> str:
-    return "ask_clarification" if state.get("missing_slots") else "resolve_product"
+    if state.get("case_timed_out"):
+        return "human_review_or_explain"
+    return "ask_clarification" if state.get("blocking_missing_slots") else "resolve_product"
 
 
 def route_after_product_resolve(state: AgentState) -> str:
+    if state.get("case_timed_out"):
+        return "human_review_or_explain"
     product_ambiguity = state.get("ambiguities", {}).get("product")
     return "ask_clarification" if product_ambiguity else "plan_sql"
 
 
 def route_after_sql_validation(state: AgentState) -> str:
+    if state.get("case_timed_out"):
+        return "human_review_or_explain"
+    if state.get("llm_error") and not str(state.get("candidate_sql") or "").strip():
+        return "human_review_or_explain"
     report = state.get("validation_report", {})
     if report.get("passed"):
         return "execute_sql"
@@ -49,6 +58,8 @@ def route_after_sql_validation(state: AgentState) -> str:
 
 
 def route_after_execution(state: AgentState) -> str:
+    if state.get("case_timed_out"):
+        return "human_review_or_explain"
     result = state.get("execution_result", {})
     if result.get("success"):
         return "validate_result"
@@ -58,8 +69,12 @@ def route_after_execution(state: AgentState) -> str:
 
 
 def route_after_result_validation(state: AgentState) -> str:
+    if state.get("case_timed_out"):
+        return "human_review_or_explain"
     if state.get("result_check", {}).get("passed") and float(state.get("confidence", 0)) >= 0.5:
         return "render_answer"
+    if int(state.get("retry_count", 0)) < int(state.get("max_retries", 2)):
+        return "repair_sql"
     return "human_review_or_explain"
 
 
@@ -85,6 +100,7 @@ class QueryAgent:
         self.preview_limit = preview_limit
         self.use_langgraph = LANGGRAPH_AVAILABLE if use_langgraph is None else use_langgraph
         self._compiled_graph = self._compile_graph() if self.use_langgraph and LANGGRAPH_AVAILABLE else None
+        self._thread_summaries: dict[str, dict[str, Any]] = {}
 
     def run(
         self,
@@ -93,18 +109,137 @@ class QueryAgent:
         query_id: str | None = None,
         thread_id: str = "default",
         max_retries: int = 2,
+        continue_with_assumptions: bool = False,
+        request_context: dict[str, Any] | None = None,
+        case_timeout_seconds: float | None = None,
+    ) -> AgentState:
+        state = self._new_run_state(
+            question=question,
+            query_id=query_id,
+            thread_id=thread_id,
+            max_retries=max_retries,
+            continue_with_assumptions=continue_with_assumptions,
+            request_context=request_context,
+            case_timeout_seconds=case_timeout_seconds,
+        )
+
+        with case_deadline(case_timeout_seconds):
+            if self._compiled_graph is not None:
+                config = {"configurable": {"thread_id": thread_id}}
+                result = self._compiled_graph.invoke(state, config=config)
+            else:
+                result = self._run_fallback(state)
+
+        self._remember_thread_summary(result)
+        return result
+
+    def prepare(
+        self,
+        *,
+        question: str = "",
+        query_id: str | None = None,
+        thread_id: str = "default",
+        max_retries: int = 2,
+        continue_with_assumptions: bool = False,
+        request_context: dict[str, Any] | None = None,
+        case_timeout_seconds: float | None = None,
+    ) -> AgentState:
+        """Generate and validate SQL without opening a database connection."""
+        state = self._new_run_state(
+            question=question,
+            query_id=query_id,
+            thread_id=thread_id,
+            max_retries=max_retries,
+            continue_with_assumptions=continue_with_assumptions,
+            request_context=request_context,
+            case_timeout_seconds=case_timeout_seconds,
+        )
+        with case_deadline(case_timeout_seconds):
+            return self._prepare_fallback(state)
+
+    def execute_prepared(
+        self,
+        prepared_state: AgentState,
+        *,
+        case_timeout_seconds: float | None = None,
+    ) -> AgentState:
+        """Revalidate and execute the exact SQL approved by the user."""
+        state: AgentState = dict(prepared_state)  # type: ignore[assignment]
+        timeout_seconds = (
+            case_timeout_seconds
+            if case_timeout_seconds is not None
+            else float(state.get("case_timeout_seconds", 0.0) or 0.0) or None
+        )
+        nodes = self._nodes()
+        state["next_action"] = "execute_sql"
+        state = _merge(
+            state,
+            add_trace(
+                state,
+                "approve_sql",
+                message="User approved the generated SQL for execution.",
+            ),
+        )
+
+        with case_deadline(timeout_seconds):
+            state = _merge(state, nodes["validate_sql"](state))
+            if not state.get("validation_report", {}).get("passed"):
+                state["next_action"] = "regenerate_sql"
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return self._persist_result(state, nodes)
+
+            state = _merge(state, nodes["execute_sql"](state))
+            if not state.get("execution_result", {}).get("success"):
+                state["next_action"] = "regenerate_sql"
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return self._persist_result(state, nodes)
+
+            state = _merge(state, nodes["validate_result"](state))
+            if not state.get("result_check", {}).get("passed"):
+                state["next_action"] = "regenerate_sql"
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return self._persist_result(state, nodes)
+
+            state = _merge(state, nodes["render_answer"](state))
+            state["next_action"] = "completed"
+            return self._persist_result(state, nodes)
+
+    def _new_run_state(
+        self,
+        *,
+        question: str,
+        query_id: str | None,
+        thread_id: str,
+        max_retries: int,
+        continue_with_assumptions: bool,
+        request_context: dict[str, Any] | None,
+        case_timeout_seconds: float | None,
     ) -> AgentState:
         if query_id and not question:
             question = self.repo.get(query_id).question
-        state = new_agent_state(question=question, thread_id=thread_id, max_retries=max_retries)
+        state = new_agent_state(
+            question=question,
+            thread_id=thread_id,
+            max_retries=max_retries,
+            continue_with_assumptions=continue_with_assumptions,
+            request_context=request_context,
+            case_timeout_seconds=case_timeout_seconds,
+        )
         state["sql_mode"] = self.sql_mode
+        if thread_id in self._thread_summaries:
+            state["thread_summary"] = dict(self._thread_summaries[thread_id])
         if query_id:
             state["matched_query_id"] = query_id
+        return state
 
-        if self._compiled_graph is not None:
-            config = {"configurable": {"thread_id": thread_id}}
-            return self._compiled_graph.invoke(state, config=config)
-        return self._run_fallback(state)
+    def _remember_thread_summary(self, state: AgentState) -> None:
+        if state.get("thread_summary"):
+            self._thread_summaries[state.get("thread_id", "default")] = dict(state["thread_summary"])
+
+    def _persist_result(self, state: AgentState, nodes: dict[str, Node]) -> AgentState:
+        result = _merge(state, nodes["persist_state"](state))
+        self._remember_thread_summary(result)
+        return result
 
     def _nodes(self) -> dict[str, Node]:
         return {
@@ -165,6 +300,10 @@ class QueryAgent:
         ):
             state = _merge(state, nodes[name](state))
 
+        if state.get("case_timed_out"):
+            state = _merge(state, nodes["human_review_or_explain"](state))
+            return _merge(state, nodes["persist_state"](state))
+
         if route_after_slot_check(state) == "ask_clarification":
             state = _merge(state, nodes["ask_clarification"](state))
             return _merge(state, nodes["persist_state"](state))
@@ -177,34 +316,95 @@ class QueryAgent:
         for name in ("plan_sql", "generate_sql"):
             state = _merge(state, nodes[name](state))
 
+        if state.get("llm_error") and not str(state.get("candidate_sql") or "").strip():
+            state = _merge(state, nodes["human_review_or_explain"](state))
+            return _merge(state, nodes["persist_state"](state))
+
         while True:
             state = _merge(state, nodes["validate_sql"](state))
-            route = route_after_sql_validation(state)
-            if route == "execute_sql":
-                break
-            if route == "repair_sql":
+            sql_route = route_after_sql_validation(state)
+            if sql_route == "repair_sql":
                 state = _merge(state, nodes["repair_sql"](state))
                 continue
+            if sql_route == "human_review_or_explain":
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return _merge(state, nodes["persist_state"](state))
+
+            state = _merge(state, nodes["execute_sql"](state))
+            execution_route = route_after_execution(state)
+            if execution_route == "repair_sql":
+                state = _merge(state, nodes["repair_sql"](state))
+                continue
+            if execution_route == "human_review_or_explain":
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return _merge(state, nodes["persist_state"](state))
+
+            state = _merge(state, nodes["validate_result"](state))
+            result_route = route_after_result_validation(state)
+            if result_route == "render_answer":
+                state = _merge(state, nodes["render_answer"](state))
+                return _merge(state, nodes["persist_state"](state))
+            if result_route == "human_review_or_explain":
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return _merge(state, nodes["persist_state"](state))
+            state = _merge(state, nodes["repair_sql"](state))
+
+    def _prepare_fallback(self, state: AgentState) -> AgentState:
+        nodes = self._nodes()
+        for name in (
+            "init_run",
+            "load_thread_context",
+            "normalize_question",
+            "detect_followup",
+            "parse_intent",
+            "retrieve_metadata",
+            "fill_slots",
+            "check_intent_slots",
+        ):
+            state = _merge(state, nodes[name](state))
+
+        if state.get("case_timed_out"):
             state = _merge(state, nodes["human_review_or_explain"](state))
-            return _merge(state, nodes["persist_state"](state))
+            return self._persist_result(state, nodes)
+
+        if route_after_slot_check(state) == "ask_clarification":
+            state = _merge(state, nodes["ask_clarification"](state))
+            return self._persist_result(state, nodes)
+
+        state = _merge(state, nodes["resolve_product"](state))
+        if route_after_product_resolve(state) == "ask_clarification":
+            state = _merge(state, nodes["ask_clarification"](state))
+            return self._persist_result(state, nodes)
+
+        for name in ("plan_sql", "generate_sql"):
+            state = _merge(state, nodes[name](state))
+
+        if state.get("llm_error") and not str(state.get("candidate_sql") or "").strip():
+            state["next_action"] = "regenerate_sql"
+            state = _merge(state, nodes["human_review_or_explain"](state))
+            return self._persist_result(state, nodes)
 
         while True:
-            state = _merge(state, nodes["execute_sql"](state))
-            route = route_after_execution(state)
-            if route == "validate_result":
-                break
-            if route == "repair_sql":
+            state = _merge(state, nodes["validate_sql"](state))
+            sql_route = route_after_sql_validation(state)
+            if sql_route == "repair_sql":
                 state = _merge(state, nodes["repair_sql"](state))
                 continue
-            state = _merge(state, nodes["human_review_or_explain"](state))
-            return _merge(state, nodes["persist_state"](state))
+            if sql_route == "human_review_or_explain":
+                state["next_action"] = "regenerate_sql"
+                state = _merge(state, nodes["human_review_or_explain"](state))
+                return self._persist_result(state, nodes)
 
-        state = _merge(state, nodes["validate_result"](state))
-        if route_after_result_validation(state) == "render_answer":
-            state = _merge(state, nodes["render_answer"](state))
-        else:
-            state = _merge(state, nodes["human_review_or_explain"](state))
-        return _merge(state, nodes["persist_state"](state))
+            state["next_action"] = "execute_sql"
+            return _merge(
+                state,
+                add_trace(
+                    state,
+                    "await_execution",
+                    status="pending",
+                    message="SQL passed validation and is waiting for user approval.",
+                ),
+            )
 
     def _compile_graph(self) -> Any:
         graph = StateGraph(AgentState)
@@ -233,3 +433,8 @@ class QueryAgent:
         graph.add_edge("render_answer", "persist_state")
         graph.add_edge("persist_state", END)
         return graph.compile()
+
+    def close(self) -> None:
+        close = getattr(self.retriever, "close", None)
+        if callable(close):
+            close()

@@ -1,0 +1,16 @@
+﻿query_id,sql_mode,executable,agent_completed,candidate_executable,exact_match,row_count_match,columns_match,projection_arity_match,semantic_schema_match,ordered_rows_match,unordered_rows_match,ordered_semantic_match,unordered_semantic_match,semantic_result_match,order_sensitive,standard_rows,agent_rows,standard_columns,agent_columns,matched_score,confidence,elapsed_ms,case_elapsed_ms,case_timeout_seconds,case_timed_out,error_type,error_tags,column_mapping,validation_errors,execution_error,trace_nodes,llm_call_count,prompt_tokens,completion_tokens,total_tokens,standard_hash,agent_hash,thread_id,repetition,run_id,model,final_answer,sql_generation_attempt_count,sql_generation_elapsed_ms,sql_generation_started_at,sql_generation_completed_at,sql_generation_attempts,sql_plan,candidate_sql,standard_sql
+s028,llm,False,False,False,False,False,False,False,False,False,False,False,False,False,False,4,0,"[""customer_level"", ""customer_count"", ""credit_market_value""]",[],0.3143,0.9,0.0,49623.4695,50.0,True,case_timeout,"[""case_timeout"", ""no_candidate_sql"", ""candidate_sql_execution_failed"", ""row_count_mismatch"", ""missing_output_column""]",{},Case exceeded the 50.00s evaluation deadline.,Case exceeded the 50.00s evaluation deadline.,init_run -> load_thread_context -> normalize_question -> detect_followup -> parse_intent -> retrieve_metadata -> fill_slots -> check_intent_slots -> human_review_or_explain -> persist_state,1,756,1406,2162,a9377575e3268ff9,1a8de3d20a5666c7,eval:p2-s028-50s-20260801:r1:s028,1,p2-s028-50s-20260801,deepseek-v4-pro,查询在 49.94 秒单题时限内未完成，已终止本题并记录为 case_timeout。,0,0,,,[],{},,"select
+    coalesce(lvl.""describe"", cust.cust_lvl_cd) as customer_level,
+    count(distinct hold.pty_id) as customer_count,
+    sum(coalesce(hold.mkt_val, 0)) as credit_market_value
+from dwd_cust_hold_d hold
+inner join ads_cust_info_d cust
+  on hold.pty_id = cust.pty_id
+ and cust.data_dt = '20260531'
+left join dim_public lvl
+  on lvl.code_type_id = '100'
+ and cust.cust_lvl_cd = lvl.code
+where hold.data_dt = '20260331'
+  and hold.sys_source = 'fc'
+group by customer_level
+order by credit_market_value desc"

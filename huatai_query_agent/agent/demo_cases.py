@@ -8,6 +8,8 @@ from typing import Any
 
 import yaml
 
+from huatai_query_agent.agent.contracts import derive_output_contract
+
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_SQL_PATH = PACKAGE_DIR / "sql" / "demo_queries_duckdb.sql"
@@ -24,6 +26,7 @@ class DemoCase:
     intent: dict[str, Any] = field(default_factory=dict)
     required_tables: list[str] = field(default_factory=list)
     expected_metrics: list[str] = field(default_factory=list)
+    output_contract: dict[str, Any] = field(default_factory=dict)
 
 
 def _normalize_text(value: str) -> str:
@@ -76,6 +79,11 @@ class DemoCaseRepository:
                 intent=intent,
                 required_tables=list(item.get("required_tables", [])),
                 expected_metrics=list(item.get("expected_metrics", [])),
+                output_contract=derive_output_contract(
+                    sql_cases[query_id],
+                    question=str(item["question"]),
+                    override=dict(item.get("output_contract") or {}),
+                ),
                 sql=sql_cases[query_id],
             )
         return cases
@@ -118,4 +126,3 @@ class DemoCaseRepository:
         if best_score < 0.30:
             return None, best_score
         return best_case, best_score
-

@@ -1,0 +1,81 @@
+version: "1.0"
+description: "官方7题的自然语言变体评测集，用于验证近义表达、口径同义词和样例召回稳定性。"
+
+cases:
+  - id: "v001"
+    base_query_id: "q001"
+    category: "paraphrase"
+    question: "本科及以上男性客户，年龄大于50岁的客户数是多少？"
+
+  - id: "v002"
+    base_query_id: "q001"
+    category: "paraphrase"
+    question: "统计男性、本科以上、50岁以上客户数量。"
+
+  - id: "v003"
+    base_query_id: "q002"
+    category: "metric_synonym"
+    question: "客户总资产按不同年龄段怎么分布？"
+
+  - id: "v004"
+    base_query_id: "q002"
+    category: "paraphrase"
+    question: "按年龄段统计客户数量和总资产分布情况。"
+    output_contract:
+      ambiguous: true
+      accepted_alternatives:
+        - "题目未指定年龄分段边界，接受明确说明边界的合理分段"
+
+  - id: "v005"
+    base_query_id: "q003"
+    category: "metric_synonym"
+    question: "钻石卡男客户、40岁以上、期末持有比亚迪A股市值超过1000元，算一下2026年一季度盈亏。"
+
+  - id: "v006"
+    base_query_id: "q003"
+    category: "paraphrase"
+    question: "钻石卡男性客户、年龄大于40岁、持有比亚迪市值超过1000元，请计算2026年Q1盈亏。"
+
+  - id: "v007"
+    base_query_id: "q004"
+    category: "paraphrase"
+    question: "请按分公司、营业部、省份和城市统计客户分布。"
+
+  - id: "v008"
+    base_query_id: "q004"
+    category: "paraphrase"
+    question: "各分公司和营业部客户都来自哪些省市？"
+
+  - id: "v009"
+    base_query_id: "q005"
+    category: "paraphrase"
+    question: "找出一季度买卖过招商银行A股，并且季末普通账户仍持有中国平安A股的客户。"
+
+  - id: "v010"
+    base_query_id: "q005"
+    category: "time_synonym"
+    question: "2026年第一季度交易招商银行A股且Q1末普通账户持仓中国平安A股的客户有哪些？"
+
+  - id: "v011"
+    base_query_id: "q006"
+    category: "metric_synonym"
+    question: "一季度日均总资产超过30万、股票成交金额超过10万的客户，期末持仓产品类型分布如何？"
+
+  - id: "v012"
+    base_query_id: "q006"
+    category: "paraphrase"
+    question: "Q1平均资产大于300000且股票交易额大于100000的客户持有哪些产品类别？"
+    output_contract:
+      ambiguous: true
+      accepted_alternatives:
+        - "题目未明确一级或二级产品分类，也未明确是否输出客户数和市值"
+
+  - id: "v013"
+    base_query_id: "q007"
+    category: "time_synonym"
+    question: "2026年1月10日到2月15日，科创板成交金额超过25万的客户按营业部分布情况。"
+
+  - id: "v014"
+    base_query_id: "q007"
+    category: "paraphrase"
+    question: "查询1月10日至2月15日期间科创板交易额大于25万客户所在分公司和营业部。"

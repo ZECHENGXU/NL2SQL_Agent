@@ -1,8 +1,8 @@
 # Guardrail Evaluation Report
 
-- Total cases: 8
-- Matched expectations: 8/8 (100.00%)
-- Blocked SQL cases: 7/8 (87.50%)
+- Total cases: 10
+- Matched expectations: 10/10 (100.00%)
+- Blocked SQL cases: 9/10 (90.00%)
 
 | Case ID | Category | Expected Pass | Actual Pass | Matched | Errors |
 |---------|----------|---------------|-------------|---------|--------|
@@ -14,6 +14,8 @@
 | g006_unknown_qualified_column | field_hallucination | N | N | Y | SQL references unknown columns: cust.fake_col. |
 | g007_pragma | dangerous_keyword | N | N | Y | Only SELECT or WITH ... SELECT statements are allowed.; SQL contains a forbidden keyword. |
 | g008_copy | dangerous_keyword | N | N | Y | Only SELECT or WITH ... SELECT statements are allowed.; SQL contains a forbidden keyword. |
+| g009_unknown_unqualified_column | field_hallucination | N | N | Y | SQL references unknown columns: fake_col. |
+| g010_wrong_total_asset_formula | metric_formula | N | N | Y | Metric formula mismatch for total_asset: expected nm_tot_aset + fc_pur_aset. |
 
 ## Case SQL
 
@@ -79,4 +81,20 @@ COPY 导出命令必须被拦截
 
 ```sql
 copy ads_cust_info_d to 'leak.csv'
+```
+
+### g009_unknown_unqualified_column
+
+未带表别名的编造字段也必须被拦截
+
+```sql
+select fake_col from ads_cust_info_d
+```
+
+### g010_wrong_total_asset_formula
+
+总资产口径漏掉信用账户净资产时必须被拦截
+
+```sql
+select sum(coalesce(nm_tot_aset, 0)) as total_asset from dws_cust_aset_d
 ```

@@ -1,0 +1,130 @@
+{
+  "schema_version": "2.0",
+  "created_at": "2026-07-31T02:03:27.178509+00:00",
+  "run_id": "401528abeb32",
+  "configuration": {
+    "sql_mode": "demo",
+    "case_set": "official",
+    "query_ids": [],
+    "max_cases": null,
+    "repetitions": 2,
+    "use_case_hints": false,
+    "preview_limit": 3,
+    "compare_limit": 10000
+  },
+  "llm": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 4096,
+    "timeout_seconds": 60.0
+  },
+  "versions": {
+    "prompt": "2026-07-30-contract-v2",
+    "metadata": "1.0",
+    "python": "3.11.15",
+    "duckdb": "1.5.4",
+    "sqlglot": "30.12.0"
+  },
+  "artifact_hashes": {
+    "schema_catalog": "c04a31cc8ce2dac8",
+    "metrics": "a7801577eb338b8f",
+    "relationships": "1ebf91441f988f94"
+  },
+  "summary": {
+    "total_runs": 14,
+    "agent_completed": 14,
+    "candidate_executable": 14,
+    "semantic_result_match": 14,
+    "strict_exact_match": 14,
+    "llm_calls": 0,
+    "tokens": 0
+  },
+  "threads": [
+    {
+      "query_id": "q001",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q001",
+      "model": ""
+    },
+    {
+      "query_id": "q002",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q002",
+      "model": ""
+    },
+    {
+      "query_id": "q003",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q003",
+      "model": ""
+    },
+    {
+      "query_id": "q004",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q004",
+      "model": ""
+    },
+    {
+      "query_id": "q005",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q005",
+      "model": ""
+    },
+    {
+      "query_id": "q006",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q006",
+      "model": ""
+    },
+    {
+      "query_id": "q007",
+      "repetition": 1,
+      "thread_id": "eval:401528abeb32:r1:q007",
+      "model": ""
+    },
+    {
+      "query_id": "q001",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q001",
+      "model": ""
+    },
+    {
+      "query_id": "q002",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q002",
+      "model": ""
+    },
+    {
+      "query_id": "q003",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q003",
+      "model": ""
+    },
+    {
+      "query_id": "q004",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q004",
+      "model": ""
+    },
+    {
+      "query_id": "q005",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q005",
+      "model": ""
+    },
+    {
+      "query_id": "q006",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q006",
+      "model": ""
+    },
+    {
+      "query_id": "q007",
+      "repetition": 2,
+      "thread_id": "eval:401528abeb32:r2:q007",
+      "model": ""
+    }
+  ]
+}

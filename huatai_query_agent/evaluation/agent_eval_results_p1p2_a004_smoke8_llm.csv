@@ -1,0 +1,63 @@
+﻿query_id,sql_mode,executable,agent_completed,candidate_executable,exact_match,row_count_match,columns_match,projection_arity_match,semantic_schema_match,ordered_rows_match,unordered_rows_match,ordered_semantic_match,unordered_semantic_match,semantic_result_match,order_sensitive,standard_rows,agent_rows,standard_columns,agent_columns,matched_score,confidence,elapsed_ms,case_elapsed_ms,case_timeout_seconds,case_timed_out,error_type,error_tags,column_mapping,validation_errors,execution_error,trace_nodes,llm_call_count,prompt_tokens,completion_tokens,total_tokens,standard_hash,agent_hash,thread_id,repetition,run_id,model,final_answer,sql_generation_attempt_count,sql_generation_elapsed_ms,sql_generation_started_at,sql_generation_completed_at,sql_generation_attempts,sql_plan,candidate_sql,standard_sql
+a004,llm,False,False,False,False,False,False,False,False,False,False,False,False,False,True,14,0,"[""up_org_name"", ""org_name"", ""customer_count"", ""total_asset"", ""active_customer_rate"", ""turnover"", ""total_fee"", ""net_inflow"", ""holding_market_value"", ""asset_rank_in_company""]",[],0.2267,0.9,0.0,50146.7637,50.0,True,case_timeout,"[""case_timeout"", ""no_candidate_sql"", ""candidate_sql_execution_failed"", ""row_count_mismatch"", ""missing_output_column""]",{},Case exceeded the 50.00s evaluation deadline.,Case exceeded the 50.00s evaluation deadline.,init_run -> load_thread_context -> normalize_question -> detect_followup -> parse_intent -> retrieve_metadata -> fill_slots -> check_intent_slots -> human_review_or_explain -> persist_state,1,870,2852,3722,6f8edd86a93cf593,1a8de3d20a5666c7,eval:p1p2-a004-smoke8-20260801:r1:a004,1,p1p2-a004-smoke8-20260801,deepseek-v4-pro,查询在 49.91 秒单题时限内未完成，已终止本题并记录为 case_timeout。,0,0,,,[],{},,"with asset as (
+    select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+    from dws_cust_aset_d
+    where data_dt = '20260331'
+),
+trade as (
+    select
+        pty_id,
+        sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover,
+        sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+          + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee
+    from dwd_cust_tran_d
+    where data_dt between '20260101' and '20260331'
+    group by pty_id
+),
+flow as (
+    select
+        pty_id,
+        sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+          - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+    from dws_cust_fin_d
+    where data_dt between '20260101' and '20260331'
+    group by pty_id
+),
+holding as (
+    select pty_id, sum(coalesce(mkt_val, 0)) as holding_market_value
+    from dwd_cust_hold_d
+    where data_dt = '20260331'
+    group by pty_id
+),
+branch_summary as (
+    select
+        branch.up_org_name,
+        branch.org_name,
+        count(*) as customer_count,
+        sum(coalesce(asset.total_asset, 0)) as total_asset,
+        count(*) filter (where coalesce(trade.turnover, 0) > 0) * 1.0 / count(*) as active_customer_rate,
+        sum(coalesce(trade.turnover, 0)) as turnover,
+        sum(coalesce(trade.total_fee, 0)) as total_fee,
+        sum(coalesce(flow.net_inflow, 0)) as net_inflow,
+        sum(coalesce(holding.holding_market_value, 0)) as holding_market_value
+    from ads_cust_info_d cust
+    inner join dim_branch branch
+      on cust.org_id = branch.org_id
+     and branch.data_dt = '20260531'
+    left join asset on cust.pty_id = asset.pty_id
+    left join trade on cust.pty_id = trade.pty_id
+    left join flow on cust.pty_id = flow.pty_id
+    left join holding on cust.pty_id = holding.pty_id
+    where cust.data_dt = '20260531'
+    group by branch.up_org_name, branch.org_name
+),
+ranked as (
+    select
+        *,
+        dense_rank() over (partition by up_org_name order by total_asset desc) as asset_rank_in_company
+    from branch_summary
+)
+select *
+from ranked
+where asset_rank_in_company <= 3
+order by up_org_name, asset_rank_in_company, org_name"

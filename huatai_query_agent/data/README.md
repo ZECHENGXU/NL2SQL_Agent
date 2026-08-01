@@ -1,9 +1,9 @@
-# Data Layer
+# 数据层
 
-This directory contains scripts and generated local database files for the contest prototype.
+本目录包含竞赛原型所需的脚本和生成的本地数据库文件。
 
-- `import_db.py`: imports the original CSV files into DuckDB.
-- `validate_db.py`: validates row counts, columns, and basic database readiness.
-- `cust_data.duckdb`: generated local DuckDB database file. This file is not created by patch; run `import_db.py`.
+- `import_db.py`：将原始 CSV 文件导入 DuckDB。
+- `validate_db.py`：校验行数、字段和数据库基础可用性。
+- `cust_data.duckdb`：生成的本地 DuckDB 数据库文件。该文件不是通过补丁创建的，需要运行 `import_db.py` 生成。
 
-The source CSV files stay in `../原始文件/`.
+源 CSV 文件保留在 `../原始文件/`。

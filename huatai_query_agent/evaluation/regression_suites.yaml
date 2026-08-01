@@ -1,0 +1,35 @@
+version: "1.0"
+description: "按根因组织的快速回归套件；修复单一能力时无需先跑全部81题。"
+
+suites:
+  clarification:
+    description: "完整问题不得被错误阻断"
+    query_ids: ["s028", "a004", "a022", "a025"]
+
+  projection:
+    description: "用户要求的输出列、顺序和别名必须完整"
+    query_ids: ["q003", "q005", "q006", "a003", "a005", "a021"]
+
+  snapshot:
+    description: "客户及机构快照日期与事实日期必须分离"
+    query_ids: ["s017", "a019"]
+
+  cte_validator:
+    description: "CTE投影字段不能被白名单校验误杀"
+    query_ids: ["a027"]
+
+  missing_fact:
+    description: "事实缺失不能被误当作数值0"
+    query_ids: ["a012", "a017", "a023"]
+
+  window_and_topn:
+    description: "窗口分区、并列策略、资格母集和Top N"
+    query_ids: ["s029", "a010", "a012", "a018", "a026"]
+
+  semantic_evaluation:
+    description: "别名、列重排、浮点容差和非强制排序"
+    query_ids: ["q004", "v001", "v008", "s004", "s006", "s009", "a015", "a023"]
+
+  long_form:
+    description: "长文本、多表、多指标、跨主题域"
+    query_ids: ["a004", "a013", "a018", "a020", "a022", "a025", "a029", "a030"]

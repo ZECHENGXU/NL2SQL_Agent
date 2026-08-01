@@ -1,0 +1,168 @@
+{
+  "schema_version": "2.0",
+  "created_at": "2026-07-31T14:39:09.181204+00:00",
+  "run_id": "p1p2-a004-smoke3-20260731",
+  "configuration": {
+    "sql_mode": "llm",
+    "case_set": "all",
+    "query_ids": [
+      "a004"
+    ],
+    "max_cases": null,
+    "repetitions": 1,
+    "use_case_hints": true,
+    "preview_limit": 3,
+    "compare_limit": 10000,
+    "sql_events": "huatai_query_agent\\evaluation\\agent_eval_sql_generation_events_p1p2_a004_smoke3_llm.jsonl"
+  },
+  "llm": {
+    "provider": "deepseek",
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-pro",
+    "temperature": 0.0,
+    "max_tokens": 4096,
+    "timeout_seconds": 60.0
+  },
+  "versions": {
+    "prompt": "2026-07-31-contract-v3",
+    "metadata": "1.0",
+    "python": "3.11.15",
+    "duckdb": "1.5.4",
+    "sqlglot": "30.12.0"
+  },
+  "artifact_hashes": {
+    "schema_catalog": "c04a31cc8ce2dac8",
+    "metrics": "a7801577eb338b8f",
+    "relationships": "1ebf91441f988f94"
+  },
+  "summary": {
+    "total_runs": 1,
+    "agent_completed": 0,
+    "candidate_executable": 0,
+    "semantic_result_match": 0,
+    "strict_exact_match": 0,
+    "llm_calls": 2,
+    "tokens": 18390,
+    "sql_generation_attempts": 3,
+    "sql_generation_elapsed_ms": 265037.9533,
+    "average_sql_generation_attempt_elapsed_ms": 88345.98443333333
+  },
+  "threads": [
+    {
+      "query_id": "a004",
+      "repetition": 1,
+      "thread_id": "eval:p1p2-a004-smoke3-20260731:r1:a004",
+      "model": "deepseek-v4-pro",
+      "sql_generation_attempt_count": 3,
+      "sql_generation_elapsed_ms": 265037.9533,
+      "sql_generation_attempts": [
+        {
+          "attempt": 1,
+          "attempt_type": "initial",
+          "status": "failed",
+          "started_at": "2026-07-31T14:34:44.132084+00:00",
+          "completed_at": "2026-07-31T14:35:49.649408+00:00",
+          "elapsed_ms": 65517.7814,
+          "model": "",
+          "usage": {},
+          "sql": "",
+          "error": "LLM response is not a JSON object.",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "SQL is empty.",
+              "Only SELECT or WITH ... SELECT statements are allowed."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "failed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "passed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        },
+        {
+          "attempt": 2,
+          "attempt_type": "repair",
+          "status": "failed",
+          "started_at": "2026-07-31T14:35:49.651037+00:00",
+          "completed_at": "2026-07-31T14:38:03.899240+00:00",
+          "elapsed_ms": 134248.4495,
+          "model": "",
+          "usage": {},
+          "sql": "",
+          "error": "LLM response is not a JSON object.",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "SQL is empty.",
+              "Only SELECT or WITH ... SELECT statements are allowed."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "failed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "passed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        },
+        {
+          "attempt": 3,
+          "attempt_type": "repair",
+          "status": "failed",
+          "started_at": "2026-07-31T14:38:03.899240+00:00",
+          "completed_at": "2026-07-31T14:39:09.171973+00:00",
+          "elapsed_ms": 65271.7224,
+          "model": "",
+          "usage": {},
+          "sql": "",
+          "error": "LLM response is not a JSON object.",
+          "validation": {
+            "passed": false,
+            "errors": [
+              "SQL is empty.",
+              "Only SELECT or WITH ... SELECT statements are allowed."
+            ],
+            "warnings": [],
+            "checks": {
+              "readonly": "failed",
+              "basic_syntax": "passed",
+              "metadata_whitelist": "passed",
+              "field_whitelist": "passed",
+              "metric_rules": "passed",
+              "snapshot_policy": "passed",
+              "projection_contract": "passed",
+              "dictionary_translation": "passed",
+              "window_contract": "passed",
+              "missing_fact_policy": "passed",
+              "missing_period_policy": "passed",
+              "eligibility_filters": "passed",
+              "top_n_contract": "passed"
+            }
+          }
+        }
+      ],
+      "sql_plan": {}
+    }
+  ]
+}

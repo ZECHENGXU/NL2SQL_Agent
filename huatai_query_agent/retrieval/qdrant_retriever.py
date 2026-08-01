@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
-from huatai_query_agent.retrieval.embedding import DEFAULT_VECTOR_SIZE, HashingEmbedding
+from huatai_query_agent.retrieval.embedding import EmbeddingModel, build_embedding_from_env
 from huatai_query_agent.retrieval.types import MetadataChunk, RetrievalResult
 
 
@@ -39,28 +40,32 @@ class QdrantMetadataStore:
         *,
         path: Path = DEFAULT_QDRANT_PATH,
         collection_name: str = DEFAULT_COLLECTION,
-        embedding: HashingEmbedding | None = None,
+        embedding: EmbeddingModel | None = None,
     ) -> None:
         self.path = path
         self.collection_name = collection_name
-        self.embedding = embedding or HashingEmbedding()
+        self.embedding = embedding or build_embedding_from_env()
         self.client = QdrantClient(path=str(path))
 
     def rebuild(self, chunks: list[MetadataChunk]) -> None:
+        embedded_chunks = [(chunk, self.embedding.embed(chunk.text)) for chunk in chunks]
+        vector_size = len(embedded_chunks[0][1]) if embedded_chunks else self.embedding.vector_size
+        self.client.close()
+        if self.path.exists():
+            shutil.rmtree(self.path, ignore_errors=True)
         self.path.mkdir(parents=True, exist_ok=True)
-        if self.client.collection_exists(self.collection_name):
-            self.client.delete_collection(self.collection_name)
+        self.client = QdrantClient(path=str(self.path))
         self.client.create_collection(
             collection_name=self.collection_name,
-            vectors_config=VectorParams(size=DEFAULT_VECTOR_SIZE, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
         )
         points = [
             PointStruct(
                 id=idx,
-                vector=self.embedding.embed(chunk.text),
+                vector=vector,
                 payload=_chunk_to_payload(chunk),
             )
-            for idx, chunk in enumerate(chunks)
+            for idx, (chunk, vector) in enumerate(embedded_chunks)
         ]
         if points:
             self.client.upsert(collection_name=self.collection_name, points=points)

@@ -1,0 +1,2032 @@
+version: "1.0"
+description: "30道高难度Text-to-SQL压力测试题，覆盖多表多指标、跨主题域、窗口分析、集合逻辑和长文本业务输入。"
+
+cases:
+  - id: "a001"
+    category: "cross_domain_marketing"
+    scenario: "基金配置提升客群筛选"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["7表关联", "事实表预聚合", "派生比例", "多条件筛选", "营销名单"]
+    calculation_notes:
+      - "总资产取2026年3月31日普通账户总资产加信用账户购买资产。"
+      - "基金持仓仅统计期末一级分类为开放式基金的持仓市值；无基金持仓按0处理。"
+      - "股票交易额为一季度股票买入金额与卖出金额之和，净流入为三类流入减三类流出。"
+    required_tables: ["ads_cust_info_d", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product", "dim_branch"]
+    expected_metrics: ["total_asset", "fund_market_value", "fund_asset_ratio", "stock_turnover", "net_inflow"]
+    question: >-
+      财富管理团队准备做一轮基金配置提升营销，希望名单尽量聚焦在有资产基础、近期确实活跃、但基金配置仍然偏低的客户。请筛选2026年3月31日总资产不少于10万元、2026年一季度有股票交易且股票买卖合计金额大于0、同期资金净流入为正的客户；基金期末持仓市值占总资产比例达到30%及以上的不要纳入，没有基金持仓的客户按基金市值0处理。结果需要列出客户编号、姓名、分公司、营业部、总资产、基金持仓市值、基金资产占比、股票交易额和净流入，按总资产从高到低取前20名。
+    sql: |
+      with asset as (
+          select
+              pty_id,
+              coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      fund_hold as (
+          select
+              hold.pty_id,
+              sum(coalesce(hold.mkt_val, 0)) as fund_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.up_prdt_type_name = '开放式基金'
+          group by hold.pty_id
+      ),
+      stock_trade as (
+          select
+              tran.pty_id,
+              sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as stock_turnover
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.up_prdt_type_name = '股票'
+          group by tran.pty_id
+          having sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) > 0
+      ),
+      fund_flow as (
+          select
+              pty_id,
+              sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.total_asset,
+          coalesce(fund_hold.fund_market_value, 0) as fund_market_value,
+          coalesce(fund_hold.fund_market_value, 0) / nullif(asset.total_asset, 0) as fund_asset_ratio,
+          stock_trade.stock_turnover,
+          fund_flow.net_inflow
+      from ads_cust_info_d cust
+      inner join asset on cust.pty_id = asset.pty_id
+      inner join stock_trade on cust.pty_id = stock_trade.pty_id
+      inner join fund_flow on cust.pty_id = fund_flow.pty_id
+      left join fund_hold on cust.pty_id = fund_hold.pty_id
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      where cust.data_dt = '20260531'
+        and asset.total_asset >= 100000
+        and fund_flow.net_inflow > 0
+        and coalesce(fund_hold.fund_market_value, 0) / nullif(asset.total_asset, 0) < 0.30
+      order by asset.total_asset desc, cust.pty_id
+      limit 20
+
+  - id: "a002"
+    category: "cross_domain_marketing"
+    scenario: "分公司基金营销机会汇总"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["7表关联", "客户级预聚合", "分公司汇总", "条件聚合", "占比"]
+    calculation_notes:
+      - "先在客户粒度汇总各事实表，再按分公司聚合，避免多事实表直接连接导致金额重复。"
+      - "候选客户定义为期末总资产不低于10万元、股票交易额为正且基金资产占比低于30%。"
+    required_tables: ["ads_cust_info_d", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product", "dim_branch"]
+    expected_metrics: ["candidate_count", "candidate_total_asset", "avg_fund_ratio", "stock_turnover", "net_inflow"]
+    question: "按分公司汇总期末总资产不低于10万元、一季度有股票交易且基金持仓占总资产低于30%的营销候选客户数、总资产、平均基金配置比例、股票交易额和净流入，并按候选客户总资产降序取前15家分公司。"
+    sql: |
+      with asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      fund_hold as (
+          select hold.pty_id, sum(coalesce(hold.mkt_val, 0)) as fund_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.up_prdt_type_name = '开放式基金'
+          group by hold.pty_id
+      ),
+      stock_trade as (
+          select tran.pty_id,
+                 sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as stock_turnover
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.up_prdt_type_name = '股票'
+          group by tran.pty_id
+      ),
+      fund_flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      candidate as (
+          select
+              cust.pty_id,
+              branch.up_org_name,
+              asset.total_asset,
+              coalesce(fund_hold.fund_market_value, 0) as fund_market_value,
+              stock_trade.stock_turnover,
+              coalesce(fund_flow.net_inflow, 0) as net_inflow
+          from ads_cust_info_d cust
+          inner join asset on cust.pty_id = asset.pty_id
+          inner join stock_trade on cust.pty_id = stock_trade.pty_id
+          left join fund_hold on cust.pty_id = fund_hold.pty_id
+          left join fund_flow on cust.pty_id = fund_flow.pty_id
+          left join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          where cust.data_dt = '20260531'
+            and asset.total_asset >= 100000
+            and stock_trade.stock_turnover > 0
+            and coalesce(fund_hold.fund_market_value, 0) / nullif(asset.total_asset, 0) < 0.30
+      )
+      select
+          up_org_name,
+          count(*) as candidate_count,
+          sum(total_asset) as candidate_total_asset,
+          avg(fund_market_value / nullif(total_asset, 0)) as avg_fund_ratio,
+          sum(stock_turnover) as stock_turnover,
+          sum(net_inflow) as net_inflow
+      from candidate
+      group by up_org_name
+      order by candidate_total_asset desc, up_org_name
+      limit 15
+
+  - id: "a003"
+    category: "asset_flow_reconciliation"
+    scenario: "资产变动与资金净流入归因"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["多事实表", "期初期末快照", "变动归因", "绝对值排序", "客户明细"]
+    calculation_notes:
+      - "资产变动等于3月31日总资产减1月1日总资产。"
+      - "非资金流因素影响等于资产变动减一季度净流入。"
+    required_tables: ["dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["begin_asset", "end_asset", "asset_change", "net_inflow", "non_flow_change", "turnover"]
+    question: "找出一季度资产变动与资金净流入差异绝对值最大的20名客户，列出期初资产、期末资产、资产变动、净流入、非资金流因素影响、交易额以及所属分公司和营业部。"
+    sql: |
+      with asset_change as (
+          select
+              pty_id,
+              max(case when data_dt = '20260101' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as begin_asset,
+              max(case when data_dt = '20260331' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as end_asset
+          from dws_cust_aset_d
+          where data_dt in ('20260101', '20260331')
+          group by pty_id
+      ),
+      flow as (
+          select
+              pty_id,
+              sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select
+              pty_id,
+              sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.begin_asset,
+          asset.end_asset,
+          asset.end_asset - asset.begin_asset as asset_change,
+          coalesce(flow.net_inflow, 0) as net_inflow,
+          asset.end_asset - asset.begin_asset - coalesce(flow.net_inflow, 0) as non_flow_change,
+          coalesce(trade.turnover, 0) as turnover
+      from asset_change asset
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join flow on asset.pty_id = flow.pty_id
+      left join trade on asset.pty_id = trade.pty_id
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      where asset.begin_asset is not null
+        and asset.end_asset is not null
+      order by abs(asset.end_asset - asset.begin_asset - coalesce(flow.net_inflow, 0)) desc,
+               cust.pty_id
+      limit 20
+
+  - id: "a004"
+    category: "branch_performance"
+    scenario: "营业部综合经营排名"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["6表关联", "客户级宽表", "条件聚合", "窗口排名", "多指标经营看板"]
+    calculation_notes:
+      - "营业部客户数以客户快照为母集；交易、资金数据缺失按0。"
+      - "活跃客户率为一季度交易额大于0的客户数除以营业部客户数。"
+      - "在各分公司内部按期末总资产排名。"
+    required_tables: ["ads_cust_info_d", "dim_branch", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d"]
+    expected_metrics: ["customer_count", "total_asset", "active_customer_rate", "turnover", "total_fee", "net_inflow", "asset_rank_in_company"]
+    question: >-
+      区域负责人希望做一张营业部经营对比表。请以2026年5月31日客户归属为准，以营业部全部客户作为统计母集，计算每个营业部的客户数、2026年3月31日期末总资产、一季度有交易金额的活跃客户率、一季度买卖交易额、佣金及费用合计、资金净流入和期末持仓市值。交易或资金记录不存在时按0计算。最后在每个分公司内部按照期末总资产从高到低进行排名，只返回总资产最高的前3个营业部；同一分公司内并列时使用dense rank，不要强行打散并列名次。
+    sql: |
+      with asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      trade as (
+          select
+              pty_id,
+              sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover,
+              sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+                + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      flow as (
+          select
+              pty_id,
+              sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      holding as (
+          select pty_id, sum(coalesce(mkt_val, 0)) as holding_market_value
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by pty_id
+      ),
+      branch_summary as (
+          select
+              branch.up_org_name,
+              branch.org_name,
+              count(*) as customer_count,
+              sum(coalesce(asset.total_asset, 0)) as total_asset,
+              count(*) filter (where coalesce(trade.turnover, 0) > 0) * 1.0 / count(*) as active_customer_rate,
+              sum(coalesce(trade.turnover, 0)) as turnover,
+              sum(coalesce(trade.total_fee, 0)) as total_fee,
+              sum(coalesce(flow.net_inflow, 0)) as net_inflow,
+              sum(coalesce(holding.holding_market_value, 0)) as holding_market_value
+          from ads_cust_info_d cust
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          left join asset on cust.pty_id = asset.pty_id
+          left join trade on cust.pty_id = trade.pty_id
+          left join flow on cust.pty_id = flow.pty_id
+          left join holding on cust.pty_id = holding.pty_id
+          where cust.data_dt = '20260531'
+          group by branch.up_org_name, branch.org_name
+      ),
+      ranked as (
+          select
+              *,
+              dense_rank() over (partition by up_org_name order by total_asset desc) as asset_rank_in_company
+          from branch_summary
+      )
+      select *
+      from ranked
+      where asset_rank_in_company <= 3
+      order by up_org_name, asset_rank_in_company, org_name
+
+  - id: "a005"
+    category: "portfolio_risk"
+    scenario: "客户持仓集中度识别"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["窗口函数", "组合集中度", "HHI", "最大持仓占比", "跨域画像"]
+    calculation_notes:
+      - "先将同一客户同一产品的持仓合并，再计算产品权重。"
+      - "HHI为各产品持仓市值占客户总持仓市值比例的平方和。"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "dws_cust_aset_d", "dwd_cust_tran_d", "ads_cust_info_d"]
+    expected_metrics: ["holding_market_value", "product_count", "top_product_ratio", "holding_hhi", "total_asset", "turnover"]
+    question: "计算3月31日每位客户的持仓HHI和最大单一产品持仓占比，筛选HHI大于0.35的客户，并补充期末总资产和一季度交易额，按HHI降序取前20名。"
+    sql: |
+      with product_hold as (
+          select
+              pty_id,
+              prdt_id,
+              sum(coalesce(mkt_val, 0)) as product_market_value
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by pty_id, prdt_id
+          having sum(coalesce(mkt_val, 0)) > 0
+      ),
+      weighted_hold as (
+          select
+              pty_id,
+              prdt_id,
+              product_market_value,
+              sum(product_market_value) over (partition by pty_id) as holding_market_value,
+              product_market_value / nullif(sum(product_market_value) over (partition by pty_id), 0) as product_weight
+          from product_hold
+      ),
+      concentration as (
+          select
+              pty_id,
+              max(holding_market_value) as holding_market_value,
+              count(*) as product_count,
+              max(product_weight) as top_product_ratio,
+              sum(product_weight * product_weight) as holding_hhi
+          from weighted_hold
+          group by pty_id
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          concentration.holding_market_value,
+          concentration.product_count,
+          concentration.top_product_ratio,
+          concentration.holding_hhi,
+          coalesce(asset.total_asset, 0) as total_asset,
+          coalesce(trade.turnover, 0) as turnover
+      from concentration
+      inner join ads_cust_info_d cust
+        on concentration.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join asset on concentration.pty_id = asset.pty_id
+      left join trade on concentration.pty_id = trade.pty_id
+      where concentration.holding_hhi > 0.35
+      order by concentration.holding_hhi desc, concentration.holding_market_value desc
+      limit 20
+
+  - id: "a006"
+    category: "portfolio_diversification"
+    scenario: "持仓与交易品类重合度"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["集合交集", "集合并集", "Jaccard比例", "多层聚合", "客户画像"]
+    calculation_notes:
+      - "品类按产品一级分类去重。"
+      - "重合度为同时出现在持仓和交易中的品类数除以两者并集品类数。"
+    required_tables: ["dwd_cust_hold_d", "dwd_cust_tran_d", "dim_product", "dws_cust_aset_d"]
+    expected_metrics: ["holding_category_count", "trading_category_count", "overlap_category_count", "union_category_count", "category_overlap_ratio", "total_asset"]
+    question: "按客户计算3月31日持仓一级品类与一季度交易一级品类的Jaccard重合度，并列出持仓品类数、交易品类数、交集品类数、并集品类数和期末总资产，按并集品类数及总资产降序取前20名。"
+    sql: |
+      with holding_category as (
+          select distinct hold.pty_id, prdt.up_prdt_type_name as category_name
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and coalesce(hold.mkt_val, 0) > 0
+      ),
+      trading_category as (
+          select distinct tran.pty_id, prdt.up_prdt_type_name as category_name
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0) > 0
+      ),
+      category_union as (
+          select
+              coalesce(hold.pty_id, trade.pty_id) as pty_id,
+              coalesce(hold.category_name, trade.category_name) as category_name,
+              case when hold.category_name is not null then 1 else 0 end as is_held,
+              case when trade.category_name is not null then 1 else 0 end as is_traded
+          from holding_category hold
+          full outer join trading_category trade
+            on hold.pty_id = trade.pty_id
+           and hold.category_name = trade.category_name
+      ),
+      overlap as (
+          select
+              pty_id,
+              sum(is_held) as holding_category_count,
+              sum(is_traded) as trading_category_count,
+              sum(case when is_held = 1 and is_traded = 1 then 1 else 0 end) as overlap_category_count,
+              count(*) as union_category_count
+          from category_union
+          group by pty_id
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          overlap.pty_id,
+          overlap.holding_category_count,
+          overlap.trading_category_count,
+          overlap.overlap_category_count,
+          overlap.union_category_count,
+          overlap.overlap_category_count * 1.0 / nullif(overlap.union_category_count, 0) as category_overlap_ratio,
+          coalesce(asset.total_asset, 0) as total_asset
+      from overlap
+      left join asset on overlap.pty_id = asset.pty_id
+      order by overlap.union_category_count desc, total_asset desc, overlap.pty_id
+      limit 20
+
+  - id: "a007"
+    category: "behavior_migration"
+    scenario: "股票卖出后基金申购迁移"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["跨月行为序列", "条件聚合", "跨品类", "资金流", "期末资产"]
+    calculation_notes:
+      - "1月股票卖出和3月开放式基金买入分别按客户汇总。"
+      - "净流入统计整个一季度。"
+    required_tables: ["dwd_cust_tran_d", "dim_product", "dws_cust_fin_d", "dws_cust_aset_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["january_stock_sell", "march_fund_buy", "net_inflow", "end_asset"]
+    question: >-
+      产品团队想观察一类可能发生资产配置迁移的客户：他们在2026年1月卖出过股票，并在2026年3月买入过开放式基金。请按客户汇总1月股票卖出金额和3月基金买入金额，同时给出一季度资金净流入、3月31日期末总资产、客户姓名以及所属分公司和营业部。只有两项行为金额都大于0的客户才保留，结果按3月基金买入金额从高到低取前20名。
+    sql: |
+      with migration_trade as (
+          select
+              tran.pty_id,
+              sum(case
+                    when tran.data_dt between '20260101' and '20260131'
+                     and prdt.up_prdt_type_name = '股票'
+                    then coalesce(tran.sell_amt, 0) else 0
+                  end) as january_stock_sell,
+              sum(case
+                    when tran.data_dt between '20260301' and '20260331'
+                     and prdt.up_prdt_type_name = '开放式基金'
+                    then coalesce(tran.buy_amt, 0) else 0
+                  end) as march_fund_buy
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+          group by tran.pty_id
+          having january_stock_sell > 0 and march_fund_buy > 0
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as end_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          migration.january_stock_sell,
+          migration.march_fund_buy,
+          coalesce(flow.net_inflow, 0) as net_inflow,
+          coalesce(asset.end_asset, 0) as end_asset
+      from migration_trade migration
+      inner join ads_cust_info_d cust
+        on migration.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      left join flow on migration.pty_id = flow.pty_id
+      left join asset on migration.pty_id = asset.pty_id
+      order by migration.march_fund_buy desc, migration.january_stock_sell desc
+      limit 20
+
+  - id: "a008"
+    category: "cross_account_analysis"
+    scenario: "普通与信用账户综合使用情况"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["条件聚合", "跨账户", "资产持仓交易", "派生占比", "客户排名"]
+    calculation_notes:
+      - "普通与信用资产来自资产汇总表的独立字段。"
+      - "信用持仓与交易按sys_source等于fc统计。"
+    required_tables: ["dws_cust_aset_d", "dwd_cust_hold_d", "dwd_cust_tran_d", "ads_cust_info_d"]
+    expected_metrics: ["normal_asset", "credit_asset", "credit_asset_ratio", "credit_holding_value", "credit_turnover", "normal_turnover"]
+    question: "筛选3月31日信用账户资产占总资产比例不低于20%且一季度普通、信用账户均有交易的客户，列出两类账户资产、信用资产占比、信用持仓市值、普通账户交易额和信用账户交易额，按信用账户资产降序取前20名。"
+    sql: |
+      with asset as (
+          select
+              pty_id,
+              coalesce(nm_tot_aset, 0) as normal_asset,
+              coalesce(fc_pur_aset, 0) as credit_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      holding as (
+          select
+              pty_id,
+              sum(case when sys_source = 'fc' then coalesce(mkt_val, 0) else 0 end) as credit_holding_value
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select
+              pty_id,
+              sum(case when sys_source = 'nm' then coalesce(buy_amt, 0) + coalesce(sell_amt, 0) else 0 end) as normal_turnover,
+              sum(case when sys_source = 'fc' then coalesce(buy_amt, 0) + coalesce(sell_amt, 0) else 0 end) as credit_turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          asset.normal_asset,
+          asset.credit_asset,
+          asset.credit_asset / nullif(asset.normal_asset + asset.credit_asset, 0) as credit_asset_ratio,
+          coalesce(holding.credit_holding_value, 0) as credit_holding_value,
+          trade.normal_turnover,
+          trade.credit_turnover
+      from asset
+      inner join trade on asset.pty_id = trade.pty_id
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join holding on asset.pty_id = holding.pty_id
+      where asset.credit_asset / nullif(asset.normal_asset + asset.credit_asset, 0) >= 0.20
+        and trade.normal_turnover > 0
+        and trade.credit_turnover > 0
+      order by asset.credit_asset desc, cust.pty_id
+      limit 20
+
+  - id: "a009"
+    category: "dormant_customer"
+    scenario: "高资产沉默客户识别"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["NOT EXISTS", "日均资产", "持仓快照", "客户画像", "营销名单"]
+    calculation_notes:
+      - "日均资产按数据区间内实际存在的资产快照求平均。"
+      - "无交易指一季度不存在买入金额或卖出金额大于0的记录。"
+    required_tables: ["dws_cust_aset_d", "dwd_cust_hold_d", "dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["avg_daily_asset", "end_holding_value", "holding_product_count"]
+    question: >-
+      客户运营团队准备唤醒一批“有资产、无交易”的沉默客户。请找出2026年一季度日均总资产不少于20万元、3月31日仍有正持仓市值，但整个一季度没有任何买入或卖出金额大于0记录的客户。日均资产按实际存在的每日资产快照平均，不要固定除以90；持仓先在客户粒度汇总。输出客户编号、姓名、分公司、营业部、日均资产、期末持仓市值和持仓产品数，按日均资产降序取前20名。
+    sql: |
+      with avg_asset as (
+          select
+              pty_id,
+              avg(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) as avg_daily_asset
+          from dws_cust_aset_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+          having avg(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) >= 200000
+      ),
+      holding as (
+          select
+              pty_id,
+              sum(coalesce(mkt_val, 0)) as end_holding_value,
+              count(distinct prdt_id) as holding_product_count
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by pty_id
+          having sum(coalesce(mkt_val, 0)) > 0
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.avg_daily_asset,
+          holding.end_holding_value,
+          holding.holding_product_count
+      from avg_asset asset
+      inner join holding on asset.pty_id = holding.pty_id
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      where not exists (
+          select 1
+          from dwd_cust_tran_d tran
+          where tran.pty_id = asset.pty_id
+            and tran.data_dt between '20260101' and '20260331'
+            and coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0) > 0
+      )
+      order by asset.avg_daily_asset desc, cust.pty_id
+      limit 20
+
+  - id: "a010"
+    category: "branch_product_ranking"
+    scenario: "营业部热门持仓产品Top3"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["多表关联", "分区TopN", "持仓预聚合", "窗口函数", "并列处理"]
+    calculation_notes:
+      - "在营业部和产品粒度汇总期末持仓。"
+      - "每个营业部按持仓市值使用row_number取前三名，市值相同时按产品ID排序。"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["holder_count", "market_value", "product_rank"]
+    question: "统计每个营业部3月31日持仓市值最高的3只产品，返回分公司、营业部、产品、持仓客户数、持仓市值及营业部内排名；并列市值按产品ID升序打散。"
+    sql: |
+      with branch_product as (
+          select
+              branch.up_org_name,
+              branch.org_name,
+              hold.prdt_id,
+              prdt.prdt_name,
+              prdt.up_prdt_type_name,
+              count(distinct hold.pty_id) as holder_count,
+              sum(coalesce(hold.mkt_val, 0)) as market_value
+          from dwd_cust_hold_d hold
+          inner join ads_cust_info_d cust
+            on hold.pty_id = cust.pty_id
+           and cust.data_dt = '20260531'
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+          group by branch.up_org_name, branch.org_name, hold.prdt_id,
+                   prdt.prdt_name, prdt.up_prdt_type_name
+          having sum(coalesce(hold.mkt_val, 0)) > 0
+      ),
+      ranked as (
+          select
+              *,
+              row_number() over (
+                  partition by up_org_name, org_name
+                  order by market_value desc, prdt_id
+              ) as product_rank
+          from branch_product
+      )
+      select
+          up_org_name,
+          org_name,
+          prdt_id,
+          prdt_name,
+          up_prdt_type_name,
+          holder_count,
+          market_value,
+          product_rank
+      from ranked
+      where product_rank <= 3
+      order by up_org_name, org_name, product_rank
+
+  - id: "a011"
+    category: "regional_customer_ranking"
+    scenario: "省内高贡献客户排名"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["分区TopN", "客户级费用聚合", "窗口函数", "地域排名", "稳定排序"]
+    calculation_notes:
+      - "客户贡献按一季度买卖佣金与买卖费用之和衡量。"
+      - "每个省使用row_number选取前三名，费用相同时按客户编号排序。"
+    required_tables: ["dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["turnover", "total_fee", "trade_days", "fee_rank_in_province"]
+    question: "按一季度交易佣金及费用合计计算客户贡献，在每个省内取贡献最高的3名客户，并返回交易额、费用、交易天数、营业部和省内排名。"
+    sql: |
+      with customer_trade as (
+          select
+              pty_id,
+              sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover,
+              sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+                + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee,
+              count(distinct data_dt) as trade_days
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+          having sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+            + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) > 0
+      ),
+      ranked as (
+          select
+              cust.prov_name,
+              cust.pty_id,
+              cust.name,
+              branch.org_name,
+              trade.turnover,
+              trade.total_fee,
+              trade.trade_days,
+              row_number() over (
+                  partition by cust.prov_name
+                  order by trade.total_fee desc, cust.pty_id
+              ) as fee_rank_in_province
+          from customer_trade trade
+          inner join ads_cust_info_d cust
+            on trade.pty_id = cust.pty_id
+           and cust.data_dt = '20260531'
+          left join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+      )
+      select *
+      from ranked
+      where fee_rank_in_province <= 3
+      order by prov_name, fee_rank_in_province
+
+  - id: "a012"
+    category: "branch_trend"
+    scenario: "营业部交易环比增长"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["月度聚合", "LAG", "环比", "分区窗口", "TopN"]
+    calculation_notes:
+      - "月交易额为买入金额与卖出金额之和。"
+      - "3月环比以2月交易额为分母；2月为0时环比为空。"
+    required_tables: ["dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["march_turnover", "february_turnover", "month_over_month_change", "month_over_month_rate", "active_customer_count"]
+    question: >-
+      经营分析会上需要查看3月份交易增长最快的营业部。请先按营业部和月份汇总2026年一季度买卖交易额及活跃客户数，再用窗口函数取得每个营业部上月交易额。最终只比较3月相对2月的变化，列出分公司、营业部、3月交易额、2月交易额、环比增加额、环比增幅和3月活跃客户数。2月交易额为0时环比增幅返回NULL，按环比增加额从高到低取前20个营业部。
+    sql: |
+      with monthly_trade as (
+          select
+              branch.up_org_name,
+              branch.org_name,
+              substr(tran.data_dt, 1, 6) as trade_month,
+              count(distinct tran.pty_id) as active_customer_count,
+              sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as turnover
+          from dwd_cust_tran_d tran
+          inner join ads_cust_info_d cust
+            on tran.pty_id = cust.pty_id
+           and cust.data_dt = '20260531'
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          where tran.data_dt between '20260101' and '20260331'
+          group by branch.up_org_name, branch.org_name, trade_month
+      ),
+      trended as (
+          select
+              *,
+              lag(turnover) over (
+                  partition by up_org_name, org_name
+                  order by trade_month
+              ) as previous_month_turnover
+          from monthly_trade
+      )
+      select
+          up_org_name,
+          org_name,
+          turnover as march_turnover,
+          previous_month_turnover as february_turnover,
+          turnover - previous_month_turnover as month_over_month_change,
+          (turnover - previous_month_turnover) / nullif(previous_month_turnover, 0) as month_over_month_rate,
+          active_customer_count
+      from trended
+      where trade_month = '202603'
+        and previous_month_turnover is not null
+      order by month_over_month_change desc, up_org_name, org_name
+      limit 20
+
+  - id: "a013"
+    category: "cross_sell_marketing"
+    scenario: "ETF潜客筛选"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["7表关联", "NOT EXISTS", "现金占比", "正向资金流", "长条件链"]
+    calculation_notes:
+      - "现金资产为普通账户现金余额与信用账户现金余额之和。"
+      - "无ETF持仓使用NOT EXISTS判断3月31日正市值持仓。"
+    required_tables: ["dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["total_asset", "cash_asset", "cash_ratio", "stock_turnover", "net_inflow"]
+    question: >-
+      ETF业务团队计划从现有股票客户中寻找现金较充裕但尚未配置ETF的潜客。请筛选2026年3月31日总资产不少于10万元、现金资产占总资产比例不低于40%、一季度股票交易额大于0且资金净流入为正的客户；如果客户在3月31日已经持有任何ETF且该持仓市值大于0，则必须排除。输出客户编号、姓名、分公司、营业部、总资产、现金资产、现金占比、股票交易额和净流入，按现金资产降序取前20名。
+    sql: |
+      with asset as (
+          select
+              pty_id,
+              coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset,
+              coalesce(nm_bal, 0) + coalesce(fc_bal, 0) as cash_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      stock_trade as (
+          select tran.pty_id,
+                 sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as stock_turnover
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.up_prdt_type_name = '股票'
+          group by tran.pty_id
+          having sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) > 0
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.total_asset,
+          asset.cash_asset,
+          asset.cash_asset / nullif(asset.total_asset, 0) as cash_ratio,
+          stock_trade.stock_turnover,
+          flow.net_inflow
+      from asset
+      inner join stock_trade on asset.pty_id = stock_trade.pty_id
+      inner join flow on asset.pty_id = flow.pty_id
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      where asset.total_asset >= 100000
+        and asset.cash_asset / nullif(asset.total_asset, 0) >= 0.40
+        and flow.net_inflow > 0
+        and not exists (
+            select 1
+            from dwd_cust_hold_d hold
+            inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+            where hold.pty_id = asset.pty_id
+              and hold.data_dt = '20260331'
+              and prdt.prdt_type_name = 'ETF'
+              and coalesce(hold.mkt_val, 0) > 0
+        )
+      order by asset.cash_asset desc, cust.pty_id
+      limit 20
+
+  - id: "a014"
+    category: "cross_sell_marketing"
+    scenario: "债券配置潜客筛选"
+    difficulty: "expert"
+    input_style: "concise"
+    capability_tags: ["EXISTS与NOT EXISTS", "跨产品类别", "资产门槛", "交易活跃", "营销名单"]
+    calculation_notes:
+      - "要求期末ETF正市值持仓存在，同时债券正市值持仓不存在。"
+      - "股票交易额统计一季度全部股票一级分类。"
+    required_tables: ["dwd_cust_hold_d", "dwd_cust_tran_d", "dim_product", "dws_cust_aset_d", "ads_cust_info_d"]
+    expected_metrics: ["total_asset", "etf_market_value", "stock_turnover"]
+    question: "找出3月31日持有ETF但未持有任何债券、期末总资产不低于10万元且一季度有股票交易的客户，列出ETF市值、总资产和股票交易额，按总资产降序取前20名。"
+    sql: |
+      with etf_hold as (
+          select hold.pty_id, sum(coalesce(hold.mkt_val, 0)) as etf_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.prdt_type_name = 'ETF'
+          group by hold.pty_id
+          having sum(coalesce(hold.mkt_val, 0)) > 0
+      ),
+      stock_trade as (
+          select tran.pty_id,
+                 sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) as stock_turnover
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.up_prdt_type_name = '股票'
+          group by tran.pty_id
+          having sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) > 0
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          asset.total_asset,
+          etf.etf_market_value,
+          stock_trade.stock_turnover
+      from etf_hold etf
+      inner join stock_trade on etf.pty_id = stock_trade.pty_id
+      inner join asset on etf.pty_id = asset.pty_id
+      inner join ads_cust_info_d cust
+        on etf.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      where asset.total_asset >= 100000
+        and not exists (
+            select 1
+            from dwd_cust_hold_d hold
+            inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+            where hold.pty_id = etf.pty_id
+              and hold.data_dt = '20260331'
+              and prdt.up_prdt_type_name = '债券'
+              and coalesce(hold.mkt_val, 0) > 0
+        )
+      order by asset.total_asset desc, cust.pty_id
+      limit 20
+
+  - id: "a015"
+    category: "fund_customer_profile"
+    scenario: "基金持仓客户活跃度分层"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["客户级母集", "条件聚合", "字典翻译", "活跃率", "多指标分组"]
+    calculation_notes:
+      - "母集为3月31日开放式基金持仓市值大于0的客户。"
+      - "交易活跃客户定义为一季度任意产品买卖金额合计大于0。"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "dwd_cust_tran_d", "dws_cust_aset_d", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["fund_customer_count", "active_customer_count", "active_customer_rate", "fund_market_value", "total_asset", "turnover"]
+    question: >-
+      请从客户等级维度分析基金持仓客户的交易活跃情况。统计母集限定为2026年3月31日开放式基金持仓市值大于0的客户，每位客户只能计数一次。对每个客户等级输出基金客户数、一季度交易额大于0的活跃客户数、活跃率、基金持仓市值、期末总资产和一季度全品类交易额。客户等级需要通过公共字典翻译，交易或资产缺失按0处理，按基金持仓市值从高到低排序。
+    sql: |
+      with fund_customer as (
+          select hold.pty_id, sum(coalesce(hold.mkt_val, 0)) as fund_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.up_prdt_type_name = '开放式基金'
+          group by hold.pty_id
+          having sum(coalesce(hold.mkt_val, 0)) > 0
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          count(*) as fund_customer_count,
+          count(*) filter (where coalesce(trade.turnover, 0) > 0) as active_customer_count,
+          count(*) filter (where coalesce(trade.turnover, 0) > 0) * 1.0 / count(*) as active_customer_rate,
+          sum(fund.fund_market_value) as fund_market_value,
+          sum(coalesce(asset.total_asset, 0)) as total_asset,
+          sum(coalesce(trade.turnover, 0)) as turnover
+      from fund_customer fund
+      inner join ads_cust_info_d cust
+        on fund.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      left join trade on fund.pty_id = trade.pty_id
+      left join asset on fund.pty_id = asset.pty_id
+      group by customer_level
+      order by fund_market_value desc, customer_level
+
+  - id: "a016"
+    category: "customer_churn_risk"
+    scenario: "资产流失风险客户识别"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["期初期末比较", "净流出", "买卖方向", "多条件交集", "风险名单"]
+    calculation_notes:
+      - "资产下降额为期初资产减期末资产。"
+      - "净流出为总流出减总流入；卖买差为卖出金额减买入金额。"
+    required_tables: ["dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["begin_asset", "end_asset", "asset_loss", "net_outflow", "sell_buy_gap", "total_fee"]
+    question: >-
+      客户留存团队希望识别同时出现多项流失信号的人群。请筛选2026年3月31日总资产低于1月1日、整个一季度资金为净流出、并且证券卖出金额高于买入金额的客户。输出客户编号、姓名、分公司、营业部、期初资产、期末资产、资产下降额、净流出金额、卖出减买入差额和交易费用合计。结果按资产下降额从高到低取前20名；缺少期初或期末资产的客户不参与。
+    sql: |
+      with asset as (
+          select
+              pty_id,
+              max(case when data_dt = '20260101' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as begin_asset,
+              max(case when data_dt = '20260331' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as end_asset
+          from dws_cust_aset_d
+          where data_dt in ('20260101', '20260331')
+          group by pty_id
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_out, 0) + coalesce(tran_out, 0) + coalesce(assign_out, 0)
+                   - coalesce(cash_in, 0) - coalesce(tran_in, 0) - coalesce(assign_in, 0)) as net_outflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select
+              pty_id,
+              sum(coalesce(sell_amt, 0) - coalesce(buy_amt, 0)) as sell_buy_gap,
+              sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+                + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.begin_asset,
+          asset.end_asset,
+          asset.begin_asset - asset.end_asset as asset_loss,
+          flow.net_outflow,
+          trade.sell_buy_gap,
+          trade.total_fee
+      from asset
+      inner join flow on asset.pty_id = flow.pty_id
+      inner join trade on asset.pty_id = trade.pty_id
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      where asset.begin_asset is not null
+        and asset.end_asset is not null
+        and asset.end_asset < asset.begin_asset
+        and flow.net_outflow > 0
+        and trade.sell_buy_gap > 0
+      order by asset_loss desc, cust.pty_id
+      limit 20
+
+  - id: "a017"
+    category: "wealth_upgrade"
+    scenario: "资产层级跃迁客户"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["阈值穿越", "期初期末快照", "资金贡献率", "交易指标", "客户分层"]
+    calculation_notes:
+      - "跃迁定义为期初总资产低于10万元且期末达到或超过10万元。"
+      - "净流入贡献率为净流入除以资产增长额。"
+    required_tables: ["dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "ads_cust_info_d", "dim_public"]
+    expected_metrics: ["begin_asset", "end_asset", "asset_growth", "net_inflow", "net_inflow_contribution", "turnover"]
+    question: >-
+      分析一季度内跨过10万元资产门槛的客户：要求客户1月1日总资产低于10万元，3月31日总资产达到或超过10万元。请列出客户等级、期初资产、期末资产、资产增长额、一季度净流入、净流入对资产增长的贡献率以及交易额。净流入贡献率以资产增长额为分母，分母为0时返回NULL。按资产增长额从高到低取前20名。
+    sql: |
+      with asset as (
+          select
+              pty_id,
+              max(case when data_dt = '20260101' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as begin_asset,
+              max(case when data_dt = '20260331' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as end_asset
+          from dws_cust_aset_d
+          where data_dt in ('20260101', '20260331')
+          group by pty_id
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          asset.pty_id,
+          coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+          asset.begin_asset,
+          asset.end_asset,
+          asset.end_asset - asset.begin_asset as asset_growth,
+          coalesce(flow.net_inflow, 0) as net_inflow,
+          coalesce(flow.net_inflow, 0) / nullif(asset.end_asset - asset.begin_asset, 0) as net_inflow_contribution,
+          coalesce(trade.turnover, 0) as turnover
+      from asset
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_public lvl
+        on lvl.code_type_id = '100'
+       and cust.cust_lvl_cd = lvl.code
+      left join flow on asset.pty_id = flow.pty_id
+      left join trade on asset.pty_id = trade.pty_id
+      where asset.begin_asset < 100000
+        and asset.end_asset >= 100000
+      order by asset_growth desc, asset.pty_id
+      limit 20
+
+  - id: "a018"
+    category: "branch_performance"
+    scenario: "营业部多指标综合评分"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["多指标评分", "PERCENT_RANK", "客户级预聚合", "窗口函数", "营业部排名"]
+    calculation_notes:
+      - "综合分为总资产、交易额、净流入和活跃率四项percent_rank之和。"
+      - "percent_rank越大代表指标越高，因此综合分越高排名越靠前。"
+    required_tables: ["ads_cust_info_d", "dim_branch", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d"]
+    expected_metrics: ["total_asset", "turnover", "net_inflow", "active_rate", "composite_score", "overall_rank"]
+    question: >-
+      请构建营业部综合经营排名。先以客户归属快照为母集，在营业部粒度统计3月31日总资产、一季度交易额、一季度净流入和交易活跃客户率；随后分别对四个指标在全部营业部中计算percent_rank，并将四个percent_rank直接相加作为综合得分，不做额外权重。输出各原始指标、四个分项得分、综合得分和综合名次，按综合得分降序取前20名。交易及资金数据缺失按0处理。
+    sql: |
+      with asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      branch_summary as (
+          select
+              branch.up_org_name,
+              branch.org_name,
+              sum(coalesce(asset.total_asset, 0)) as total_asset,
+              sum(coalesce(trade.turnover, 0)) as turnover,
+              sum(coalesce(flow.net_inflow, 0)) as net_inflow,
+              count(*) filter (where coalesce(trade.turnover, 0) > 0) * 1.0 / count(*) as active_rate
+          from ads_cust_info_d cust
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          left join asset on cust.pty_id = asset.pty_id
+          left join trade on cust.pty_id = trade.pty_id
+          left join flow on cust.pty_id = flow.pty_id
+          where cust.data_dt = '20260531'
+          group by branch.up_org_name, branch.org_name
+      ),
+      scored as (
+          select
+              *,
+              percent_rank() over (order by total_asset) as asset_score,
+              percent_rank() over (order by turnover) as turnover_score,
+              percent_rank() over (order by net_inflow) as flow_score,
+              percent_rank() over (order by active_rate) as activity_score
+          from branch_summary
+      ),
+      ranked as (
+          select
+              *,
+              asset_score + turnover_score + flow_score + activity_score as composite_score,
+              dense_rank() over (
+                  order by asset_score + turnover_score + flow_score + activity_score desc
+              ) as overall_rank
+          from scored
+      )
+      select *
+      from ranked
+      order by composite_score desc, up_org_name, org_name
+      limit 20
+
+  - id: "a019"
+    category: "product_concentration"
+    scenario: "产品营业部集中风险"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["产品与营业部双粒度", "窗口汇总", "Top1贡献", "持仓交易融合", "集中度"]
+    calculation_notes:
+      - "产品营业部集中度为该产品最大单一营业部持仓市值除以产品总持仓市值。"
+      - "产品交易额统计一季度，持仓统计3月31日。"
+    required_tables: ["dwd_cust_hold_d", "dwd_cust_tran_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["holder_count", "total_market_value", "top_branch_market_value", "top_branch_ratio", "turnover"]
+    question: >-
+      风险管理希望查看持仓是否过度集中在单一营业部。请在产品粒度统计3月31日持仓客户数和总持仓市值，并找出每只产品持仓市值最大的营业部及其贡献比例；同时补充该产品一季度交易额。只分析至少有2名持仓客户且总持仓市值大于0的产品，按最大营业部贡献比例降序、总持仓市值降序取前20只产品。最大营业部市值并列时按营业部名称升序取一个。
+    sql: |
+      with branch_product_hold as (
+          select
+              hold.prdt_id,
+              branch.org_name,
+              count(distinct hold.pty_id) as branch_holder_count,
+              sum(coalesce(hold.mkt_val, 0)) as branch_market_value
+          from dwd_cust_hold_d hold
+          inner join ads_cust_info_d cust
+            on hold.pty_id = cust.pty_id
+           and cust.data_dt = '20260531'
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          where hold.data_dt = '20260331'
+          group by hold.prdt_id, branch.org_name
+          having sum(coalesce(hold.mkt_val, 0)) > 0
+      ),
+      product_hold as (
+          select
+              prdt_id,
+              sum(branch_holder_count) as holder_count,
+              sum(branch_market_value) as total_market_value
+          from branch_product_hold
+          group by prdt_id
+          having sum(branch_holder_count) >= 2
+      ),
+      top_branch as (
+          select
+              *,
+              row_number() over (
+                  partition by prdt_id
+                  order by branch_market_value desc, org_name
+              ) as branch_rank
+          from branch_product_hold
+      ),
+      product_trade as (
+          select prdt_id,
+                 sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by prdt_id
+      )
+      select
+          hold.prdt_id,
+          prdt.prdt_name,
+          prdt.up_prdt_type_name,
+          hold.holder_count,
+          hold.total_market_value,
+          top_branch.org_name as top_branch_name,
+          top_branch.branch_market_value as top_branch_market_value,
+          top_branch.branch_market_value / nullif(hold.total_market_value, 0) as top_branch_ratio,
+          coalesce(trade.turnover, 0) as turnover
+      from product_hold hold
+      inner join top_branch
+        on hold.prdt_id = top_branch.prdt_id
+       and top_branch.branch_rank = 1
+      inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+      left join product_trade trade on hold.prdt_id = trade.prdt_id
+      order by top_branch_ratio desc, hold.total_market_value desc, hold.prdt_id
+      limit 20
+
+  - id: "a020"
+    category: "asset_holding_reconciliation"
+    scenario: "持仓市值与资产口径核对"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["跨事实表对账", "派生比例", "账户条件聚合", "异常排序", "客户明细"]
+    calculation_notes:
+      - "总持仓市值、普通账户持仓和信用账户持仓均取3月31日。"
+      - "持仓资产比为总持仓市值除以同日期总资产，不预设异常阈值。"
+    required_tables: ["dwd_cust_hold_d", "dws_cust_aset_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["total_asset", "holding_market_value", "normal_holding_value", "credit_holding_value", "holding_asset_ratio", "difference_amount"]
+    question: >-
+      数据核对人员想比较客户期末持仓市值与资产汇总口径。请分别汇总2026年3月31日每位客户的普通账户持仓市值、信用账户持仓市值和总持仓市值，再与同日普通账户总资产加信用账户购买资产进行比较。输出客户、分公司、营业部、总资产、三项持仓指标、持仓市值占总资产比例以及“总持仓市值减总资产”的差额。总资产为0时比例返回NULL，不设置异常阈值，直接按持仓资产比降序并以差额降序作为第二排序，取前20名。
+    sql: |
+      with holding as (
+          select
+              pty_id,
+              sum(coalesce(mkt_val, 0)) as holding_market_value,
+              sum(case when sys_source = 'nm' then coalesce(mkt_val, 0) else 0 end) as normal_holding_value,
+              sum(case when sys_source = 'fc' then coalesce(mkt_val, 0) else 0 end) as credit_holding_value
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by pty_id
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.total_asset,
+          holding.holding_market_value,
+          holding.normal_holding_value,
+          holding.credit_holding_value,
+          holding.holding_market_value / nullif(asset.total_asset, 0) as holding_asset_ratio,
+          holding.holding_market_value - asset.total_asset as difference_amount
+      from holding
+      inner join asset on holding.pty_id = asset.pty_id
+      inner join ads_cust_info_d cust
+        on holding.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      order by holding_asset_ratio desc nulls last, difference_amount desc, cust.pty_id
+      limit 20
+
+  - id: "a021"
+    category: "asset_volatility"
+    scenario: "高资产波动客户识别"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["时间序列统计", "标准差", "变异系数", "跨域补充指标", "TopN"]
+    calculation_notes:
+      - "资产波动率使用每日总资产的样本标准差除以日均总资产。"
+      - "只分析日均资产不低于10万元且至少有2个资产快照的客户。"
+    required_tables: ["dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["avg_daily_asset", "asset_stddev", "asset_cv", "min_asset", "max_asset", "net_inflow", "turnover"]
+    question: >-
+      风控团队希望识别资产规模较高但波动明显的客户。请基于2026年一季度每日资产快照，计算每位客户总资产的日均值、样本标准差、最小值、最大值和变异系数，其中变异系数等于样本标准差除以日均总资产。只保留日均总资产不少于10万元、至少有2个快照且日均资产不为0的客户；再补充一季度资金净流入、交易额以及分公司和营业部。按变异系数从高到低取前20名。
+    sql: |
+      with asset_stats as (
+          select
+              pty_id,
+              count(*) as snapshot_count,
+              avg(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) as avg_daily_asset,
+              stddev_samp(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) as asset_stddev,
+              min(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) as min_asset,
+              max(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) as max_asset
+          from dws_cust_aset_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+          having count(*) >= 2
+             and avg(coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0)) >= 100000
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          branch.up_org_name,
+          branch.org_name,
+          asset.snapshot_count,
+          asset.avg_daily_asset,
+          asset.asset_stddev,
+          asset.asset_stddev / nullif(asset.avg_daily_asset, 0) as asset_cv,
+          asset.min_asset,
+          asset.max_asset,
+          coalesce(flow.net_inflow, 0) as net_inflow,
+          coalesce(trade.turnover, 0) as turnover
+      from asset_stats asset
+      inner join ads_cust_info_d cust
+        on asset.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      left join flow on asset.pty_id = flow.pty_id
+      left join trade on asset.pty_id = trade.pty_id
+      order by asset_cv desc, asset.avg_daily_asset desc
+      limit 20
+
+  - id: "a022"
+    category: "monthly_management_report"
+    scenario: "分账户月度资金交易持仓联报"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["多事实表", "月末快照", "FULL OUTER JOIN", "LAG", "分账户趋势"]
+    calculation_notes:
+      - "每月持仓取该月最后一个可用data_dt的全市场快照。"
+      - "资金净流入、交易额和费用按月及账户来源聚合。"
+    required_tables: ["dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d"]
+    expected_metrics: ["net_inflow", "turnover", "total_fee", "active_customer_count", "month_end_market_value", "turnover_mom_change"]
+    question: >-
+      请生成2026年一季度普通账户和信用账户的月度联报。每个月、每种账户来源分别统计资金净流入、买卖交易额、佣金及费用合计、交易活跃客户数，以及月末持仓市值。月末持仓必须取该自然月最后一个可用持仓日期，而不是写死31日。还要用窗口函数计算同一账户来源交易额相对上月的增加额；1月没有上月数据时返回NULL。即使某个月某类账户只出现在资金、交易或持仓中的一张表，也要通过FULL OUTER JOIN保留。
+    sql: |
+      with monthly_flow as (
+          select
+              substr(data_dt, 1, 6) as stat_month,
+              sys_source,
+              sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by stat_month, sys_source
+      ),
+      monthly_trade as (
+          select
+              substr(data_dt, 1, 6) as stat_month,
+              sys_source,
+              sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover,
+              sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+                + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee,
+              count(distinct pty_id) as active_customer_count
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by stat_month, sys_source
+      ),
+      holding_with_month_end as (
+          select
+              *,
+              max(data_dt) over (partition by substr(data_dt, 1, 6)) as month_end_dt
+          from dwd_cust_hold_d
+          where data_dt between '20260101' and '20260331'
+      ),
+      monthly_holding as (
+          select
+              substr(data_dt, 1, 6) as stat_month,
+              sys_source,
+              sum(coalesce(mkt_val, 0)) as month_end_market_value
+          from holding_with_month_end
+          where data_dt = month_end_dt
+          group by stat_month, sys_source
+      ),
+      combined as (
+          select
+              coalesce(flow.stat_month, trade.stat_month, holding.stat_month) as stat_month,
+              coalesce(flow.sys_source, trade.sys_source, holding.sys_source) as sys_source,
+              coalesce(flow.net_inflow, 0) as net_inflow,
+              coalesce(trade.turnover, 0) as turnover,
+              coalesce(trade.total_fee, 0) as total_fee,
+              coalesce(trade.active_customer_count, 0) as active_customer_count,
+              coalesce(holding.month_end_market_value, 0) as month_end_market_value
+          from monthly_flow flow
+          full outer join monthly_trade trade
+            on flow.stat_month = trade.stat_month
+           and flow.sys_source = trade.sys_source
+          full outer join monthly_holding holding
+            on coalesce(flow.stat_month, trade.stat_month) = holding.stat_month
+           and coalesce(flow.sys_source, trade.sys_source) = holding.sys_source
+      )
+      select
+          *,
+          turnover - lag(turnover) over (
+              partition by sys_source order by stat_month
+          ) as turnover_mom_change
+      from combined
+      order by sys_source, stat_month
+
+  - id: "a023"
+    category: "product_migration"
+    scenario: "ETF退出客户追踪"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["双快照差集", "NOT EXISTS", "期间交易", "资产变化", "客户追踪"]
+    calculation_notes:
+      - "退出客户指1月1日ETF持仓市值大于0，3月31日不存在ETF正市值持仓。"
+      - "期间ETF卖出和买入金额统计整个一季度。"
+    required_tables: ["dwd_cust_hold_d", "dwd_cust_tran_d", "dim_product", "dws_cust_aset_d", "ads_cust_info_d"]
+    expected_metrics: ["begin_etf_value", "etf_buy_amount", "etf_sell_amount", "begin_asset", "end_asset", "asset_change"]
+    question: >-
+      请追踪一季度退出ETF持仓的客户。客户必须在2026年1月1日持有ETF且ETF市值大于0，同时在3月31日已经没有任何ETF正市值持仓。对这些客户汇总一季度ETF买入金额、卖出金额，并补充1月1日ETF市值、期初总资产、期末总资产和资产变动。输出客户编号和姓名，按ETF卖出金额降序、期初ETF市值降序取前20名。3月31日存在ETF记录但市值为0仍视为已经退出。
+    sql: |
+      with begin_etf as (
+          select hold.pty_id, sum(coalesce(hold.mkt_val, 0)) as begin_etf_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260101'
+            and prdt.prdt_type_name = 'ETF'
+          group by hold.pty_id
+          having sum(coalesce(hold.mkt_val, 0)) > 0
+      ),
+      etf_trade as (
+          select
+              tran.pty_id,
+              sum(coalesce(tran.buy_amt, 0)) as etf_buy_amount,
+              sum(coalesce(tran.sell_amt, 0)) as etf_sell_amount
+          from dwd_cust_tran_d tran
+          inner join dim_product prdt on tran.prdt_id = prdt.prdt_id
+          where tran.data_dt between '20260101' and '20260331'
+            and prdt.prdt_type_name = 'ETF'
+          group by tran.pty_id
+      ),
+      asset as (
+          select
+              pty_id,
+              max(case when data_dt = '20260101' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as begin_asset,
+              max(case when data_dt = '20260331' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as end_asset
+          from dws_cust_aset_d
+          where data_dt in ('20260101', '20260331')
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          begin_etf.begin_etf_value,
+          coalesce(trade.etf_buy_amount, 0) as etf_buy_amount,
+          coalesce(trade.etf_sell_amount, 0) as etf_sell_amount,
+          asset.begin_asset,
+          asset.end_asset,
+          asset.end_asset - asset.begin_asset as asset_change
+      from begin_etf
+      inner join ads_cust_info_d cust
+        on begin_etf.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join etf_trade trade on begin_etf.pty_id = trade.pty_id
+      left join asset on begin_etf.pty_id = asset.pty_id
+      where not exists (
+          select 1
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.pty_id = begin_etf.pty_id
+            and hold.data_dt = '20260331'
+            and prdt.prdt_type_name = 'ETF'
+            and coalesce(hold.mkt_val, 0) > 0
+      )
+      order by etf_sell_amount desc, begin_etf.begin_etf_value desc
+      limit 20
+
+  - id: "a024"
+    category: "product_migration"
+    scenario: "新增基金持仓客户分布"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["双快照反连接", "新增客户集合", "营业部汇总", "资金流", "多指标"]
+    calculation_notes:
+      - "新增基金客户指1月1日无开放式基金正持仓、3月31日有正持仓。"
+      - "按分公司和营业部汇总客户数，基金市值及净流入。"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "dws_cust_fin_d", "dws_cust_aset_d", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["new_fund_customer_count", "fund_market_value", "total_asset", "net_inflow", "positive_flow_customer_count"]
+    question: >-
+      分析一季度新增开放式基金持仓客户的营业部分布。新增客户定义为2026年1月1日没有开放式基金正市值持仓，但3月31日开放式基金持仓市值大于0。请按分公司和营业部统计新增客户数、期末基金市值、期末总资产、一季度净流入，以及其中净流入为正的客户数。事实表先汇总到客户粒度，无资金流水按净流入0处理，按新增客户数和基金市值依次降序取前20个营业部。
+    sql: |
+      with end_fund as (
+          select hold.pty_id, sum(coalesce(hold.mkt_val, 0)) as fund_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.up_prdt_type_name = '开放式基金'
+          group by hold.pty_id
+          having sum(coalesce(hold.mkt_val, 0)) > 0
+      ),
+      new_fund_customer as (
+          select end_fund.*
+          from end_fund
+          where not exists (
+              select 1
+              from dwd_cust_hold_d begin_hold
+              inner join dim_product prdt on begin_hold.prdt_id = prdt.prdt_id
+              where begin_hold.pty_id = end_fund.pty_id
+                and begin_hold.data_dt = '20260101'
+                and prdt.up_prdt_type_name = '开放式基金'
+                and coalesce(begin_hold.mkt_val, 0) > 0
+          )
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      )
+      select
+          branch.up_org_name,
+          branch.org_name,
+          count(*) as new_fund_customer_count,
+          sum(new_customer.fund_market_value) as fund_market_value,
+          sum(coalesce(asset.total_asset, 0)) as total_asset,
+          sum(coalesce(flow.net_inflow, 0)) as net_inflow,
+          count(*) filter (where coalesce(flow.net_inflow, 0) > 0) as positive_flow_customer_count
+      from new_fund_customer new_customer
+      inner join ads_cust_info_d cust
+        on new_customer.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      inner join dim_branch branch
+        on cust.org_id = branch.org_id
+       and branch.data_dt = '20260531'
+      left join flow on new_customer.pty_id = flow.pty_id
+      left join asset on new_customer.pty_id = asset.pty_id
+      group by branch.up_org_name, branch.org_name
+      order by new_fund_customer_count desc, fund_market_value desc
+      limit 20
+
+  - id: "a025"
+    category: "customer_segmentation"
+    scenario: "等级内资产四分位经营分析"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["NTILE", "分层内分位", "客户级宽表", "多指标分组", "字典翻译"]
+    calculation_notes:
+      - "先按客户等级分区，并按期末总资产使用NTILE(4)划分四组。"
+      - "四分位编号1代表等级内资产最低组，4代表最高组。"
+    required_tables: ["ads_cust_info_d", "dim_public", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d"]
+    expected_metrics: ["customer_count", "avg_asset", "net_inflow", "turnover", "holding_market_value", "active_rate"]
+    question: >-
+      为了避免不同客户等级的资产规模差异干扰，请在每个客户等级内部，按照2026年3月31日总资产从低到高使用NTILE(4)划分四个资产组。然后按“客户等级+四分位组”统计客户数、平均总资产、一季度净流入、一季度交易额、期末持仓市值和交易活跃率。客户等级需翻译为中文，交易、资金和持仓缺失按0处理。四分位编号1表示本等级最低资产组，4表示最高资产组，结果按客户等级和四分位编号排序。
+    sql: |
+      with asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      holding as (
+          select pty_id, sum(coalesce(mkt_val, 0)) as holding_market_value
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by pty_id
+      ),
+      customer_wide as (
+          select
+              cust.pty_id,
+              coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+              asset.total_asset,
+              coalesce(flow.net_inflow, 0) as net_inflow,
+              coalesce(trade.turnover, 0) as turnover,
+              coalesce(holding.holding_market_value, 0) as holding_market_value
+          from ads_cust_info_d cust
+          inner join asset on cust.pty_id = asset.pty_id
+          left join dim_public lvl
+            on lvl.code_type_id = '100'
+           and cust.cust_lvl_cd = lvl.code
+          left join flow on cust.pty_id = flow.pty_id
+          left join trade on cust.pty_id = trade.pty_id
+          left join holding on cust.pty_id = holding.pty_id
+          where cust.data_dt = '20260531'
+      ),
+      quartiled as (
+          select
+              *,
+              ntile(4) over (
+                  partition by customer_level
+                  order by total_asset, pty_id
+              ) as asset_quartile
+          from customer_wide
+      )
+      select
+          customer_level,
+          asset_quartile,
+          count(*) as customer_count,
+          avg(total_asset) as avg_asset,
+          sum(net_inflow) as net_inflow,
+          sum(turnover) as turnover,
+          sum(holding_market_value) as holding_market_value,
+          count(*) filter (where turnover > 0) * 1.0 / count(*) as active_rate
+      from quartiled
+      group by customer_level, asset_quartile
+      order by customer_level, asset_quartile
+
+  - id: "a026"
+    category: "branch_customer_concentration"
+    scenario: "营业部头部客户资产依赖"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["窗口累计", "Top5占比", "营业部集中度", "客户级预聚合", "多指标"]
+    calculation_notes:
+      - "Top5资产占比为营业部资产最高的5名客户资产之和除以营业部总资产。"
+      - "客户不足5人的营业部按实际客户数计算Top5资产。"
+    required_tables: ["ads_cust_info_d", "dim_branch", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d"]
+    expected_metrics: ["customer_count", "total_asset", "top5_asset", "top5_asset_ratio", "net_inflow", "active_rate"]
+    question: >-
+      管理层想评估营业部对少数头部客户的资产依赖程度。请按3月31日总资产对每个营业部的客户从高到低编号，计算营业部总客户数、总资产、前5名客户资产合计及其占比，同时补充一季度净流入和交易活跃率。营业部不足5名客户时，前5名资产按实际全部客户计算；总资产为0时占比返回NULL。按前5名资产占比降序、营业部总资产降序取前20名。
+    sql: |
+      with asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      ranked_customer as (
+          select
+              branch.up_org_name,
+              branch.org_name,
+              cust.pty_id,
+              coalesce(asset.total_asset, 0) as total_asset,
+              coalesce(flow.net_inflow, 0) as net_inflow,
+              coalesce(trade.turnover, 0) as turnover,
+              row_number() over (
+                  partition by branch.up_org_name, branch.org_name
+                  order by coalesce(asset.total_asset, 0) desc, cust.pty_id
+              ) as asset_rank
+          from ads_cust_info_d cust
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          left join asset on cust.pty_id = asset.pty_id
+          left join flow on cust.pty_id = flow.pty_id
+          left join trade on cust.pty_id = trade.pty_id
+          where cust.data_dt = '20260531'
+      )
+      select
+          up_org_name,
+          org_name,
+          count(*) as customer_count,
+          sum(total_asset) as total_asset,
+          sum(case when asset_rank <= 5 then total_asset else 0 end) as top5_asset,
+          sum(case when asset_rank <= 5 then total_asset else 0 end) / nullif(sum(total_asset), 0) as top5_asset_ratio,
+          sum(net_inflow) as net_inflow,
+          count(*) filter (where turnover > 0) * 1.0 / count(*) as active_rate
+      from ranked_customer
+      group by up_org_name, org_name
+      order by top5_asset_ratio desc nulls last, total_asset desc
+      limit 20
+
+  - id: "a027"
+    category: "product_flow_analysis"
+    scenario: "产品买卖失衡与覆盖分析"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["交易持仓融合", "产品净买入", "营业部覆盖", "绝对值排序", "多指标"]
+    calculation_notes:
+      - "产品净买入等于买入金额减卖出金额。"
+      - "持仓客户数和持仓市值取3月31日，营业部覆盖数取一季度有交易客户所属营业部去重数。"
+    required_tables: ["dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product", "ads_cust_info_d", "dim_branch"]
+    expected_metrics: ["buy_amount", "sell_amount", "net_buy_amount", "trading_customer_count", "branch_coverage", "holder_count", "market_value"]
+    question: >-
+      产品经理希望同时观察交易方向和期末沉淀。请按产品统计2026年一季度买入金额、卖出金额、净买入金额、交易客户数和交易客户覆盖的营业部数量，再补充3月31日持仓客户数与持仓市值。只保留买入或卖出金额大于0的产品。最终按净买入金额绝对值从高到低取前20只产品，并返回产品一级、二级分类；净买入为负表示净卖出。
+    sql: |
+      with product_trade as (
+          select
+              tran.prdt_id,
+              sum(coalesce(tran.buy_amt, 0)) as buy_amount,
+              sum(coalesce(tran.sell_amt, 0)) as sell_amount,
+              count(distinct tran.pty_id) as trading_customer_count,
+              count(distinct cust.org_id) as branch_coverage
+          from dwd_cust_tran_d tran
+          inner join ads_cust_info_d cust
+            on tran.pty_id = cust.pty_id
+           and cust.data_dt = '20260531'
+          where tran.data_dt between '20260101' and '20260331'
+          group by tran.prdt_id
+          having sum(coalesce(tran.buy_amt, 0) + coalesce(tran.sell_amt, 0)) > 0
+      ),
+      product_hold as (
+          select
+              prdt_id,
+              count(distinct pty_id) as holder_count,
+              sum(coalesce(mkt_val, 0)) as market_value
+          from dwd_cust_hold_d
+          where data_dt = '20260331'
+          group by prdt_id
+      )
+      select
+          trade.prdt_id,
+          prdt.prdt_name,
+          prdt.up_prdt_type_name,
+          prdt.prdt_type_name,
+          trade.buy_amount,
+          trade.sell_amount,
+          trade.buy_amount - trade.sell_amount as net_buy_amount,
+          trade.trading_customer_count,
+          trade.branch_coverage,
+          coalesce(hold.holder_count, 0) as holder_count,
+          coalesce(hold.market_value, 0) as market_value
+      from product_trade trade
+      inner join dim_product prdt on trade.prdt_id = prdt.prdt_id
+      left join product_hold hold on trade.prdt_id = hold.prdt_id
+      order by abs(net_buy_amount) desc, trade.prdt_id
+      limit 20
+
+  - id: "a028"
+    category: "cross_product_filter"
+    scenario: "股基配置但缺少债券的客户"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["多集合交差", "EXISTS", "NOT EXISTS", "持仓分类", "跨域指标"]
+    calculation_notes:
+      - "要求期末同时存在股票和开放式基金正持仓，并排除任何债券正持仓。"
+      - "股票、基金市值分别在客户粒度条件聚合。"
+    required_tables: ["dwd_cust_hold_d", "dim_product", "dwd_cust_tran_d", "dws_cust_aset_d", "dws_cust_fin_d", "ads_cust_info_d"]
+    expected_metrics: ["stock_market_value", "fund_market_value", "total_asset", "turnover", "net_inflow"]
+    question: >-
+      请找出2026年3月31日同时持有股票和开放式基金、但没有任何债券正市值持仓的客户。股票和基金都必须是持仓市值大于0，单纯存在零市值记录不算持有。对符合条件的客户分别汇总股票市值和基金市值，并补充期末总资产、一季度交易额和净流入，按股票市值与基金市值之和从高到低取前20名。
+    sql: |
+      with categorized_hold as (
+          select
+              hold.pty_id,
+              sum(case when prdt.up_prdt_type_name = '股票' then coalesce(hold.mkt_val, 0) else 0 end) as stock_market_value,
+              sum(case when prdt.up_prdt_type_name = '开放式基金' then coalesce(hold.mkt_val, 0) else 0 end) as fund_market_value,
+              sum(case when prdt.up_prdt_type_name = '债券' then coalesce(hold.mkt_val, 0) else 0 end) as bond_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+          group by hold.pty_id
+          having stock_market_value > 0
+             and fund_market_value > 0
+             and bond_market_value = 0
+      ),
+      asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      )
+      select
+          cust.pty_id,
+          cust.name,
+          hold.stock_market_value,
+          hold.fund_market_value,
+          coalesce(asset.total_asset, 0) as total_asset,
+          coalesce(trade.turnover, 0) as turnover,
+          coalesce(flow.net_inflow, 0) as net_inflow
+      from categorized_hold hold
+      inner join ads_cust_info_d cust
+        on hold.pty_id = cust.pty_id
+       and cust.data_dt = '20260531'
+      left join asset on hold.pty_id = asset.pty_id
+      left join trade on hold.pty_id = trade.pty_id
+      left join flow on hold.pty_id = flow.pty_id
+      order by hold.stock_market_value + hold.fund_market_value desc, cust.pty_id
+      limit 20
+
+  - id: "a029"
+    category: "demographic_value_analysis"
+    scenario: "人口属性客群价值分析"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["双字典翻译", "年龄分层", "客户级宽表", "多指标聚合", "渗透率"]
+    calculation_notes:
+      - "年龄分为30岁以下、30至44岁、45至59岁、60岁及以上。"
+      - "基金客户率按开放式基金期末持仓市值大于0判断。"
+    required_tables: ["ads_cust_info_d", "dim_public", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["customer_count", "avg_asset", "net_inflow", "turnover", "fund_customer_rate", "fund_market_value"]
+    question: >-
+      请从人口属性角度比较客户价值。将客户年龄划分为30岁以下、30至44岁、45至59岁、60岁及以上四档，并按性别、学历和年龄档组合统计客户数、3月31日平均总资产、一季度净流入、一季度交易额、开放式基金持仓客户率及基金持仓市值。性别和学历都要通过公共字典翻译；没有资产、交易、资金或基金持仓时按0处理。按客户数降序、平均资产降序排列。
+    sql: |
+      with asset as (
+          select pty_id, coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) as total_asset
+          from dws_cust_aset_d
+          where data_dt = '20260331'
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select pty_id, sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      fund_hold as (
+          select hold.pty_id, sum(coalesce(hold.mkt_val, 0)) as fund_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+            and prdt.up_prdt_type_name = '开放式基金'
+          group by hold.pty_id
+      ),
+      customer_wide as (
+          select
+              cust.pty_id,
+              coalesce(gender_dict."describe", cust.gender_cd) as gender_name,
+              coalesce(edu_dict."describe", cust.edu_cd) as education,
+              case
+                  when cust.cust_age < 30 then '30岁以下'
+                  when cust.cust_age < 45 then '30至44岁'
+                  when cust.cust_age < 60 then '45至59岁'
+                  else '60岁及以上'
+              end as age_band,
+              coalesce(asset.total_asset, 0) as total_asset,
+              coalesce(flow.net_inflow, 0) as net_inflow,
+              coalesce(trade.turnover, 0) as turnover,
+              coalesce(fund_hold.fund_market_value, 0) as fund_market_value
+          from ads_cust_info_d cust
+          left join dim_public gender_dict
+            on gender_dict.code_type_id = '500'
+           and cust.gender_cd = gender_dict.code
+          left join dim_public edu_dict
+            on edu_dict.code_type_id = '600'
+           and cust.edu_cd = edu_dict.code
+          left join asset on cust.pty_id = asset.pty_id
+          left join flow on cust.pty_id = flow.pty_id
+          left join trade on cust.pty_id = trade.pty_id
+          left join fund_hold on cust.pty_id = fund_hold.pty_id
+          where cust.data_dt = '20260531'
+      )
+      select
+          gender_name,
+          education,
+          age_band,
+          count(*) as customer_count,
+          avg(total_asset) as avg_asset,
+          sum(net_inflow) as net_inflow,
+          sum(turnover) as turnover,
+          count(*) filter (where fund_market_value > 0) * 1.0 / count(*) as fund_customer_rate,
+          sum(fund_market_value) as fund_market_value
+      from customer_wide
+      group by gender_name, education, age_band
+      order by customer_count desc, avg_asset desc, gender_name, education, age_band
+
+  - id: "a030"
+    category: "executive_dashboard"
+    scenario: "分公司客户等级综合经营报表"
+    difficulty: "expert"
+    input_style: "long_form"
+    capability_tags: ["8表关联", "多事实表预聚合", "期初期末", "渗透率", "管理报表"]
+    calculation_notes:
+      - "客户快照为母集，所有事实表先聚合到客户粒度。"
+      - "资产增长为期末资产减期初资产；基金渗透率按基金正市值客户数除以客户数。"
+    required_tables: ["ads_cust_info_d", "dim_branch", "dim_public", "dws_cust_aset_d", "dws_cust_fin_d", "dwd_cust_tran_d", "dwd_cust_hold_d", "dim_product"]
+    expected_metrics: ["customer_count", "end_asset", "asset_growth", "net_inflow", "turnover", "total_fee", "holding_market_value", "fund_penetration_rate"]
+    question: >-
+      请制作一张供管理层查看的“分公司×客户等级”综合经营报表。以2026年5月31日客户快照为唯一母集，客户等级通过公共字典翻译；资产取1月1日和3月31日两个快照，资金、交易统计整个一季度，持仓取3月31日。每个分公司和客户等级需要输出客户数、期末总资产、资产增长额、净流入、交易额、交易佣金及费用、期末持仓市值、基金持仓客户数和基金渗透率。基金客户指开放式基金期末持仓市值大于0。各事实表必须先聚合到客户粒度再连接，缺失指标按0处理，按期末总资产降序取前20个组合。
+    sql: |
+      with asset as (
+          select
+              pty_id,
+              max(case when data_dt = '20260101' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as begin_asset,
+              max(case when data_dt = '20260331' then coalesce(nm_tot_aset, 0) + coalesce(fc_pur_aset, 0) end) as end_asset
+          from dws_cust_aset_d
+          where data_dt in ('20260101', '20260331')
+          group by pty_id
+      ),
+      flow as (
+          select pty_id,
+                 sum(coalesce(cash_in, 0) + coalesce(tran_in, 0) + coalesce(assign_in, 0)
+                   - coalesce(cash_out, 0) - coalesce(tran_out, 0) - coalesce(assign_out, 0)) as net_inflow
+          from dws_cust_fin_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      trade as (
+          select
+              pty_id,
+              sum(coalesce(buy_amt, 0) + coalesce(sell_amt, 0)) as turnover,
+              sum(coalesce(buy_rake, 0) + coalesce(sell_rake, 0)
+                + coalesce(buy_fare, 0) + coalesce(sell_fare, 0)) as total_fee
+          from dwd_cust_tran_d
+          where data_dt between '20260101' and '20260331'
+          group by pty_id
+      ),
+      holding as (
+          select
+              hold.pty_id,
+              sum(coalesce(hold.mkt_val, 0)) as holding_market_value,
+              sum(case when prdt.up_prdt_type_name = '开放式基金' then coalesce(hold.mkt_val, 0) else 0 end) as fund_market_value
+          from dwd_cust_hold_d hold
+          inner join dim_product prdt on hold.prdt_id = prdt.prdt_id
+          where hold.data_dt = '20260331'
+          group by hold.pty_id
+      ),
+      customer_wide as (
+          select
+              branch.up_org_name,
+              coalesce(lvl."describe", cust.cust_lvl_cd) as customer_level,
+              cust.pty_id,
+              coalesce(asset.begin_asset, 0) as begin_asset,
+              coalesce(asset.end_asset, 0) as end_asset,
+              coalesce(flow.net_inflow, 0) as net_inflow,
+              coalesce(trade.turnover, 0) as turnover,
+              coalesce(trade.total_fee, 0) as total_fee,
+              coalesce(holding.holding_market_value, 0) as holding_market_value,
+              coalesce(holding.fund_market_value, 0) as fund_market_value
+          from ads_cust_info_d cust
+          inner join dim_branch branch
+            on cust.org_id = branch.org_id
+           and branch.data_dt = '20260531'
+          left join dim_public lvl
+            on lvl.code_type_id = '100'
+           and cust.cust_lvl_cd = lvl.code
+          left join asset on cust.pty_id = asset.pty_id
+          left join flow on cust.pty_id = flow.pty_id
+          left join trade on cust.pty_id = trade.pty_id
+          left join holding on cust.pty_id = holding.pty_id
+          where cust.data_dt = '20260531'
+      )
+      select
+          up_org_name,
+          customer_level,
+          count(*) as customer_count,
+          sum(end_asset) as end_asset,
+          sum(end_asset - begin_asset) as asset_growth,
+          sum(net_inflow) as net_inflow,
+          sum(turnover) as turnover,
+          sum(total_fee) as total_fee,
+          sum(holding_market_value) as holding_market_value,
+          count(*) filter (where fund_market_value > 0) as fund_customer_count,
+          count(*) filter (where fund_market_value > 0) * 1.0 / count(*) as fund_penetration_rate
+      from customer_wide
+      group by up_org_name, customer_level
+      order by end_asset desc, up_org_name, customer_level
+      limit 20

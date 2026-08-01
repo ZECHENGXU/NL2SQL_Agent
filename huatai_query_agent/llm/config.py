@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 PACKAGE_DIR = Path(__file__).resolve().parents[1]
@@ -61,7 +62,7 @@ class LlmSettings:
         model = _env("HUATAI_LLM_MODEL") or _env("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
         timeout_seconds = float(_env("HUATAI_LLM_TIMEOUT_SECONDS", "60") or "60")
         temperature = float(_env("HUATAI_LLM_TEMPERATURE", "0") or "0")
-        max_tokens = int(_env("HUATAI_LLM_MAX_TOKENS", "4096") or "4096")
+        max_tokens = int(_env("HUATAI_LLM_MAX_TOKENS", "8192") or "8192")
 
         return cls(
             provider=provider,
@@ -74,6 +75,8 @@ class LlmSettings:
         )
 
     def require_api_key(self) -> None:
+        if _is_local_url(self.base_url):
+            return
         if not self.api_key:
             raise ValueError("LLM API key is missing. Set HUATAI_LLM_API_KEY or DEEPSEEK_API_KEY in .env.")
 
@@ -85,3 +88,12 @@ class LlmSettings:
             return "***"
         return f"{self.api_key[:6]}...{self.api_key[-4:]}"
 
+
+def _is_local_url(url: str) -> bool:
+    host = urlparse(url).hostname or ""
+    return (
+        host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+        or host.startswith("192.168.")
+        or host.startswith("10.")
+        or any(host.startswith(f"172.{idx}.") for idx in range(16, 32))
+    )
