@@ -6,6 +6,18 @@ This directory contains automated evaluation scripts for the Huatai Text-to-SQL 
 - `run_agent_eval.py`: runs standard SQL and Agent SQL, compares results, and writes Markdown/CSV reports.
 - `validate_case_sql.py`: validates generated reference SQL and can export complete expected-result snapshots.
 - `run_guardrail_eval.py`: checks SQL guardrails and hallucination suppression cases.
+- `retrieval_evaluator.py`: A/B tests RRF against RRF + Cross-Encoder reranking.
+
+Metadata retrieval reranker report:
+
+- [`retrieval_reranker_ab_report.md`](retrieval_reranker_ab_report.md)
+- `retrieval_reranker_final_ab_results.json` (machine-readable per-case results)
+
+```powershell
+python -m huatai_query_agent.evaluation.retrieval_evaluator `
+  --temp-qdrant huatai_query_agent\runtime\retrieval_eval_qdrant `
+  --output huatai_query_agent\evaluation\retrieval_reranker_final_ab_results.json
+```
 
 ## Standard SQL vs Agent SQL
 

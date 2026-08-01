@@ -37,6 +37,8 @@ class RerankerSettings:
     max_length: int = 512
     device: str | None = None
     fail_open: bool = True
+    fusion_weight: float = 0.5
+    fusion_rrf_k: int = 60
 
     @classmethod
     def from_env(cls) -> "RerankerSettings":
@@ -49,6 +51,8 @@ class RerankerSettings:
             max_length=_positive_int_env("HUATAI_RERANKER_MAX_LENGTH", 512),
             device=_env("HUATAI_RERANKER_DEVICE"),
             fail_open=_boolean_env("HUATAI_RERANKER_FAIL_OPEN", True),
+            fusion_weight=_positive_float_env("HUATAI_RERANKER_FUSION_WEIGHT", 0.5),
+            fusion_rrf_k=_positive_int_env("HUATAI_RERANKER_FUSION_RRF_K", 60),
         )
 
 
@@ -94,11 +98,25 @@ class CrossEncoderMetadataReranker:
             )
             return self._fallback_results(results, exc)
 
+        model_order = sorted(
+            range(len(results)),
+            key=lambda index: (-scores[index], index, results[index].chunk.id),
+        )
+        model_ranks = {
+            result_index: rank
+            for rank, result_index in enumerate(model_order, start=1)
+        }
+
         scored_results = []
         for input_rank, (result, score) in enumerate(
             zip(results, scores),
             start=1,
         ):
+            model_rank = model_ranks[input_rank - 1]
+            rank_contribution = self.settings.fusion_weight / (
+                self.settings.fusion_rrf_k + model_rank
+            )
+            fused_score = result.score + rank_contribution
             details = dict(result.details)
             details["rrf_score"] = result.score
             details["reranker"] = {
@@ -106,12 +124,17 @@ class CrossEncoderMetadataReranker:
                 "model": self.settings.model,
                 "input_rank": input_rank,
                 "score": score,
+                "rank": model_rank,
+                "fusion": "rrf_plus_cross_encoder_rank",
+                "fusion_weight": self.settings.fusion_weight,
+                "fusion_rrf_k": self.settings.fusion_rrf_k,
+                "rank_contribution": rank_contribution,
                 "status": "ok",
             }
             scored_results.append(
                 RetrievalResult(
                     chunk=result.chunk,
-                    score=score,
+                    score=fused_score,
                     source="reranker",
                     details=details,
                 )
@@ -201,6 +224,13 @@ def _as_float_scores(values: Any, *, expected_count: int) -> list[float]:
 
 def _positive_int_env(name: str, default: int) -> int:
     value = int(_env(name, str(default)) or default)
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero.")
+    return value
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    value = float(_env(name, str(default)) or default)
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero.")
     return value

@@ -14,6 +14,7 @@ RETRIEVABLE_CHUNK_TYPES = frozenset(
 )
 DEFAULT_RRF_K = 60
 DEFAULT_CANDIDATE_MULTIPLIER = 3
+DEFAULT_RERANK_CANDIDATE_MULTIPLIER = 1
 
 
 class HybridMetadataRetriever:
@@ -26,11 +27,14 @@ class HybridMetadataRetriever:
         enable_reranker: bool = True,
         rrf_k: int = DEFAULT_RRF_K,
         candidate_multiplier: int = DEFAULT_CANDIDATE_MULTIPLIER,
+        rerank_candidate_multiplier: int = DEFAULT_RERANK_CANDIDATE_MULTIPLIER,
     ) -> None:
         if rrf_k <= 0:
             raise ValueError("rrf_k must be greater than zero.")
         if candidate_multiplier < 1:
             raise ValueError("candidate_multiplier must be at least one.")
+        if rerank_candidate_multiplier < 1:
+            raise ValueError("rerank_candidate_multiplier must be at least one.")
         source_chunks = chunks if chunks is not None else build_metadata_chunks()
         self.chunks = [
             chunk
@@ -42,6 +46,7 @@ class HybridMetadataRetriever:
         self.reranker = reranker or (build_reranker_from_env() if enable_reranker else None)
         self.rrf_k = rrf_k
         self.candidate_multiplier = candidate_multiplier
+        self.rerank_candidate_multiplier = rerank_candidate_multiplier
 
     def search(self, query: str, *, top_k: int = 12) -> list[RetrievalResult]:
         if top_k <= 0:
@@ -62,13 +67,19 @@ class HybridMetadataRetriever:
             {"keyword": keyword_results, "qdrant": qdrant_results},
             rrf_k=self.rrf_k,
         )
-        exact_ids = {result.chunk.id for result in exact_results}
-        rerank_candidates = [
+        pinned_exact_results = exact_results[:top_k]
+        exact_ids = {result.chunk.id for result in pinned_exact_results}
+        fused_candidates = [
             result for result in fused_results if result.chunk.id not in exact_ids
         ][:candidate_k]
         if self.reranker is not None:
+            non_exact_slots = top_k - len(pinned_exact_results)
+            rerank_k = non_exact_slots * self.rerank_candidate_multiplier
+            rerank_candidates = fused_candidates[:rerank_k]
             rerank_candidates = self.reranker.rerank(query, rerank_candidates)
-        return _dedupe_results(exact_results + rerank_candidates)[:top_k]
+        else:
+            rerank_candidates = fused_candidates
+        return _dedupe_results(pinned_exact_results + rerank_candidates)[:top_k]
 
     def build_context(self, query: str, *, top_k: int = 16) -> dict[str, object]:
         results = self.search(query, top_k=top_k)

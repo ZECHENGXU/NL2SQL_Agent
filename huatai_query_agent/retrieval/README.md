@@ -19,16 +19,29 @@
 
 ```text
 HUATAI_RERANKER_PROVIDER=cross-encoder
-HUATAI_RERANKER_MODEL=BAAI/bge-reranker-base
+# HUATAI_RERANKER_MODEL=BAAI/bge-reranker-base
 HUATAI_RERANKER_BATCH_SIZE=8
 HUATAI_RERANKER_MAX_LENGTH=512
 HUATAI_RERANKER_DEVICE=cpu
 HUATAI_RERANKER_FAIL_OPEN=true
+HUATAI_RERANKER_FUSION_WEIGHT=0.5
+HUATAI_RERANKER_FUSION_RRF_K=60
 ```
 
 设为 `HUATAI_RERANKER_PROVIDER=disabled` 可以保留 RRF、关闭精排。启用
 `fail_open` 时，模型加载或推理失败会保留原 RRF 顺序，并在结果的
 `details.reranker` 中记录 `fallback` 状态。
+
+Cross-Encoder 原始分数不与关键词、向量分数直接相加。系统将模型打分
+转换为候选名次，再以 reciprocal-rank 贡献加入原 RRF 分数，从而保留
+首阶段检索先验并限制纯模型重排造成的召回波动。
+
+默认只对最终输出窗口内的 RRF 候选重新排序，不扩大 Cross-Encoder 的
+候选窗口，因此 Top 16 的候选集合保持不变。需要实验更激进的精排召回时，
+可以通过 `HybridMetadataRetriever(rerank_candidate_multiplier=3)` 扩大窗口。
+
+完整的 30 题 A/B 过程、被否决方案、最终指标和延迟见
+[`../evaluation/retrieval_reranker_ab_report.md`](../evaluation/retrieval_reranker_ab_report.md)。
 
 ## 构建 Qdrant 索引
 

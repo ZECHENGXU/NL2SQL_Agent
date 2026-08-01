@@ -310,7 +310,7 @@ class CrossEncoderRerankerTests(unittest.TestCase):
             model=model,
         )
         first = self._result("table.first", 0.03)
-        second = self._result("table.second", 0.02)
+        second = self._result("table.second", 0.0299)
 
         results = reranker.rerank("find second", [first, second])
 
@@ -321,9 +321,14 @@ class CrossEncoderRerankerTests(unittest.TestCase):
         self.assertEqual(["reranker", "reranker"], [result.source for result in results])
         self.assertEqual(4, model.batch_size)
         self.assertEqual("find second", model.inputs[0][0])
-        self.assertEqual(0.02, results[0].details["rrf_score"])
+        self.assertEqual(0.0299, results[0].details["rrf_score"])
         self.assertEqual(2, results[0].details["reranker"]["input_rank"])
         self.assertEqual(0.9, results[0].details["reranker"]["score"])
+        self.assertEqual(1, results[0].details["reranker"]["rank"])
+        self.assertEqual(
+            "rrf_plus_cross_encoder_rank",
+            results[0].details["reranker"]["fusion"],
+        )
         self.assertEqual("rrf", results[0].details["fusion"])
 
     def test_exact_result_stays_pinned_before_cross_encoder_results(self) -> None:
@@ -332,9 +337,10 @@ class CrossEncoderRerankerTests(unittest.TestCase):
         second = self._result("table.second", 0.02)
         keyword = _StaticKeywordRetriever([first, second])
         qdrant = _EmptyQdrantStore([first, second])
+        model = _StaticCrossEncoderModel([0.1, 0.9])
         reranker = CrossEncoderMetadataReranker(
-            RerankerSettings(model="test-reranker"),
-            model=_StaticCrossEncoderModel([0.1, 0.9]),
+            RerankerSettings(model="test-reranker", fusion_weight=3.0),
+            model=model,
         )
         retriever = HybridMetadataRetriever(
             chunks=[exact, first.chunk, second.chunk],
@@ -352,6 +358,7 @@ class CrossEncoderRerankerTests(unittest.TestCase):
             [result.chunk.id for result in results],
         )
         self.assertEqual(["exact", "reranker", "reranker"], [r.source for r in results])
+        self.assertEqual(2, len(model.inputs))
 
     def test_fail_open_retains_rrf_order_and_marks_fallback(self) -> None:
         reranker = CrossEncoderMetadataReranker(
